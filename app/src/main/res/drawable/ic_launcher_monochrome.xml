@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lop mau don (chi co alpha) de he thong tu to mau theo theme cua may (Android 13+) -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="18dp"
+    android:insetTop="18dp"
+    android:insetRight="18dp"
+    android:insetBottom="18dp">
+
+    <bitmap android:src="@drawable/logo_monochrome" />
+</inset>

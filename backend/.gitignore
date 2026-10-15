@@ -1,0 +1,12 @@
+node_modules/
+.env
+*.env
+# Van giu lai file mau cau hinh
+!.env.example
+# Anh do nguoi dung tai len thi bo qua, nhung giu lai anh du lieu mau de nguoi khac
+# clone project ve van co anh mon an / danh muc de demo
+uploads/*
+!uploads/.gitkeep
+!uploads/cat-*.jpg
+!uploads/food-*.jpg
+*.log

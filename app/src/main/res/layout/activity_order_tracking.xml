@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:fitsSystemWindows="true"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:navigationIcon="@drawable/ic_back"
+        app:title="Theo dõi đơn hàng" />
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@color/background">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Trang thai hien tai -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical"
+                    android:padding="24dp">
+
+                    <FrameLayout
+                        android:layout_width="96dp"
+                        android:layout_height="96dp"
+                        android:background="@drawable/bg_circle_soft">
+
+                        <ImageView
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:layout_gravity="center"
+                            android:importantForAccessibility="no"
+                            android:src="@drawable/ic_truck"
+                            app:tint="@color/colorPrimary" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/text_order_code"
+                        style="@style/Text.App.BodySecondary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp" />
+
+                    <TextView
+                        android:id="@+id/text_current_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:textSize="26sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        style="@style/Text.App.Caption"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="Trạng thái được cập nhật tự động" />
+
+                    <TextView
+                        android:id="@+id/text_payment_status"
+                        style="@style/Text.App.StatusChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <TextView
+                style="@style/Text.App.Section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginTop="22dp"
+                android:text="Tiến trình đơn hàng" />
+
+            <!-- Cac buoc: OrderTrackingActivity goi setSelected() cho buoc da hoan thanh -->
+            <TextView
+                android:id="@+id/step_pending"
+                style="@style/Text.App.TrackingStep"
+                android:text="Chờ xác nhận" />
+
+            <TextView
+                android:id="@+id/step_confirmed"
+                style="@style/Text.App.TrackingStep"
+                android:text="Quán đã xác nhận đơn" />
+
+            <TextView
+                android:id="@+id/step_shipped"
+                style="@style/Text.App.TrackingStep"
+                android:text="Shipper đang giao hàng" />
+
+            <TextView
+                android:id="@+id/step_delivered"
+                style="@style/Text.App.TrackingStep"
+                android:text="Đã giao thành công" />
+
+            <TextView
+                android:id="@+id/text_cancelled_notice"
+                style="@style/Text.App.Error"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center"
+                android:padding="16dp"
+                android:text="Đơn hàng này đã bị hủy"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_bottom_bar"
+        android:paddingStart="20dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="12dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_go_home"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Về trang chủ"
+            app:icon="@drawable/ic_home"
+            app:iconGravity="textStart"
+            app:iconPadding="10dp"
+            app:iconTint="@color/white" />
+    </FrameLayout>
+
+</LinearLayout>

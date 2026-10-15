@@ -1,0 +1,21 @@
+# Android
+*.iml
+.gradle/
+local.properties
+.idea/
+app/build/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# macOS
+.DS_Store
+
+# Node.js
+backend/node_modules/
+backend/.env
+backend/uploads/*
+!backend/uploads/.gitkeep

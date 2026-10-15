@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Anh dai dien mac dinh: nen cam nhat, icon nguoi mau cam -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/primary_light" />
+            <size
+                android:width="96dp"
+                android:height="96dp" />
+        </shape>
+    </item>
+    <item
+        android:width="52dp"
+        android:height="52dp"
+        android:drawable="@drawable/ic_person_brand"
+        android:gravity="center" />
+</layer-list>

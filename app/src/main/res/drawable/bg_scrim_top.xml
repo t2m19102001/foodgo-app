@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lop toi phia tren anh de nut quay lai mau trang luon doc duoc -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:endColor="@android:color/transparent"
+        android:startColor="@color/scrim_top" />
+</shape>

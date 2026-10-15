@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nen man hinh dang nhap/dang ky: dai cam phia tren (nam ca duoi status bar), phan con lai mau trang -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/surface" />
+        </shape>
+    </item>
+    <item
+        android:height="380dp"
+        android:gravity="top">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="315"
+                android:endColor="@color/colorAccent"
+                android:startColor="@color/colorPrimaryDark" />
+        </shape>
+    </item>
+</layer-list>

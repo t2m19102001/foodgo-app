@@ -1,0 +1,46 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Base.Theme.TranMinhMan_LeNgocNhan_DoAn" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorPrimaryContainer">@color/primary_light</item>
+        <item name="colorOnPrimaryContainer">@color/colorPrimaryDark</item>
+        <item name="colorSecondary">@color/colorPrimaryDark</item>
+        <item name="colorOnSecondary">@color/white</item>
+        <item name="colorSecondaryContainer">@color/primary_light</item>
+        <item name="colorOnSecondaryContainer">@color/colorPrimaryDark</item>
+        <item name="colorError">@color/error</item>
+
+        <item name="android:colorBackground">@color/background</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+        <item name="colorSurfaceContainer">@color/surface</item>
+        <item name="colorSurfaceContainerLow">@color/surface</item>
+        <item name="colorSurfaceContainerHigh">@color/surface</item>
+        <item name="colorOutline">@color/outline_strong</item>
+        <item name="colorOutlineVariant">@color/outline</item>
+        <item name="colorControlNormal">@color/text_primary</item>
+
+        <item name="android:statusBarColor">@color/surface</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+
+        <item name="toolbarStyle">@style/Widget.App.Toolbar</item>
+        <item name="materialButtonStyle">@style/Widget.App.Button</item>
+        <item name="materialButtonOutlinedStyle">@style/Widget.App.Button.Outlined</item>
+        <item name="textInputStyle">@style/Widget.App.TextInputLayout</item>
+        <item name="materialCardViewStyle">@style/Widget.App.Card</item>
+        <item name="bottomNavigationStyle">@style/Widget.App.BottomNavigation</item>
+        <item name="ratingBarStyle">@style/Widget.App.RatingBar</item>
+    </style>
+
+    <style name="Theme.TranMinhMan_LeNgocNhan_DoAn" parent="Base.Theme.TranMinhMan_LeNgocNhan_DoAn" />
+
+    <!-- Cho man hinh co header cam (Splash, Login, Register): icon status bar mau trang -->
+    <style name="Theme.App.Brand" parent="Theme.TranMinhMan_LeNgocNhan_DoAn">
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/colorPrimaryDark</item>
+    </style>
+</resources>

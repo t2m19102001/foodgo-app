@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Thong tin ca nhan -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <FrameLayout
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
+                        android:background="@drawable/bg_category_ring"
+                        android:padding="3dp">
+
+                        <com.google.android.material.imageview.ShapeableImageView
+                            android:id="@+id/image_avatar"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:background="@color/primary_light"
+                            android:contentDescription="Ảnh đại diện"
+                            android:scaleType="centerCrop"
+                            app:shapeAppearanceOverlay="@style/ShapeAppearance.App.Circle" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/text_name"
+                            style="@style/Text.App.Title"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1" />
+
+                        <TextView
+                            android:id="@+id/text_email"
+                            style="@style/Text.App.BodySecondary"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="end"
+                            android:maxLines="1" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="18dp"
+                    android:background="@color/divider" />
+
+                <TextView
+                    android:id="@+id/text_phone"
+                    style="@style/Text.App.InfoRow"
+                    android:layout_marginTop="16dp"
+                    android:drawableStart="@drawable/ic_phone" />
+
+                <TextView
+                    android:id="@+id/text_address"
+                    style="@style/Text.App.InfoRow"
+                    android:layout_marginTop="12dp"
+                    android:drawableStart="@drawable/ic_location" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Cai dat tai khoan -->
+        <TextView
+            style="@style/Text.App.Caption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginTop="22dp"
+            android:layout_marginBottom="8dp"
+            android:text="CÀI ĐẶT TÀI KHOẢN"
+            android:textStyle="bold" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/btn_edit_profile"
+                    style="@style/Text.App.MenuRow"
+                    android:drawableStart="@drawable/ic_edit"
+                    android:drawableEnd="@drawable/ic_chevron_right"
+                    android:text="Chỉnh sửa hồ sơ" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginStart="50dp"
+                    android:background="@color/divider" />
+
+                <TextView
+                    android:id="@+id/btn_my_addresses"
+                    style="@style/Text.App.MenuRow"
+                    android:drawableStart="@drawable/ic_location"
+                    android:drawableEnd="@drawable/ic_chevron_right"
+                    android:text="Địa chỉ giao hàng" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginStart="50dp"
+                    android:background="@color/divider" />
+
+                <TextView
+                    android:id="@+id/btn_change_password"
+                    style="@style/Text.App.MenuRow"
+                    android:drawableStart="@drawable/ic_lock"
+                    android:drawableEnd="@drawable/ic_chevron_right"
+                    android:text="Đổi mật khẩu" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Khu vuc quan tri: chi hien khi dang nhap bang tai khoan isAdmin -->
+        <LinearLayout
+            android:id="@+id/layout_admin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/Text.App.Caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginTop="22dp"
+                android:layout_marginBottom="8dp"
+                android:text="QUẢN TRỊ"
+                android:textStyle="bold" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/btn_admin_orders"
+                        style="@style/Text.App.MenuRow"
+                        android:drawableStart="@drawable/ic_truck"
+                        android:drawableEnd="@drawable/ic_chevron_right"
+                        android:text="Quản lý đơn hàng" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginStart="50dp"
+                        android:background="@color/divider" />
+
+                    <TextView
+                        android:id="@+id/btn_admin_foods"
+                        style="@style/Text.App.MenuRow"
+                        android:drawableStart="@drawable/ic_food"
+                        android:drawableEnd="@drawable/ic_chevron_right"
+                        android:text="Quản lý món ăn" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginStart="50dp"
+                        android:background="@color/divider" />
+
+                    <TextView
+                        android:id="@+id/btn_admin_categories"
+                        style="@style/Text.App.MenuRow"
+                        android:drawableStart="@drawable/ic_category"
+                        android:drawableEnd="@drawable/ic_chevron_right"
+                        android:text="Quản lý danh mục" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginStart="50dp"
+                        android:background="@color/divider" />
+
+                    <TextView
+                        android:id="@+id/btn_admin_stats"
+                        style="@style/Text.App.MenuRow"
+                        android:drawableStart="@drawable/ic_chart"
+                        android:drawableEnd="@drawable/ic_chevron_right"
+                        android:text="Thống kê doanh thu" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp">
+
+            <TextView
+                android:id="@+id/btn_logout"
+                style="@style/Text.App.MenuRow"
+                android:drawableStart="@drawable/ic_logout"
+                android:drawableTint="@color/error"
+                android:text="Đăng xuất"
+                android:textColor="@color/error"
+                android:textStyle="bold" />
+        </com.google.android.material.card.MaterialCardView>
+
+        <ProgressBar
+            android:id="@+id/progress_bar"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="16dp"
+            android:visibility="gone" />
+
+        <TextView
+            style="@style/Text.App.Caption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:gravity="center"
+            android:text="@string/app_name"
+            android:textColor="@color/text_hint" />
+
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

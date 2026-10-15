@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".DeliveryApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:theme="@style/Theme.TranMinhMan_LeNgocNhan_DoAn">
+        <activity
+            android:name=".ui.auth.SplashActivity"
+            android:exported="true"
+            android:theme="@style/Theme.App.Brand">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ui.auth.LoginActivity"
+            android:exported="false"
+            android:theme="@style/Theme.App.Brand"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.auth.RegisterActivity"
+            android:exported="false"
+            android:theme="@style/Theme.App.Brand"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.main.MainActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.home.FoodDetailActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.cart.CartActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.cart.CheckoutActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.order.OrderDetailActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.order.OrderTrackingActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.review.AddEditReviewActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.profile.EditProfileActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.profile.ChangePasswordActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.notification.NotificationActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.address.AddressListActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.address.AddEditAddressActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.admin.AdminOrderActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.admin.AdminFoodActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.admin.AddEditFoodActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.admin.AdminCategoryActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.admin.AddEditCategoryActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.admin.AdminStatsActivity"
+            android:exported="false" />
+    </application>
+
+</manifest>

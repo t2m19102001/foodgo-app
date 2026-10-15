@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- Brand -->
+    <color name="colorPrimary">#FF6B35</color>
+    <color name="colorPrimaryDark">#E4531F</color>
+    <color name="colorAccent">#FF8A50</color>
+    <color name="primary_light">#FFF1EB</color>
+    <color name="primary_soft">#FFE0D2</color>
+
+    <!-- Neutral -->
+    <color name="background">#F6F7FB</color>
+    <color name="background_light">#F1F2F6</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text_primary">#1B1D28</color>
+    <color name="text_secondary">#7A7F8F</color>
+    <color name="text_hint">#A9ADBA</color>
+    <color name="outline">#ECEDF2</color>
+    <color name="outline_strong">#D9DCE3</color>
+    <color name="divider">#EEF0F4</color>
+    <color name="scrim_top">#66000000</color>
+
+    <!-- Feedback -->
+    <color name="error">#E5484D</color>
+    <color name="error_light">#FDECEC</color>
+    <color name="success">#22A45D</color>
+    <color name="star">#FFB400</color>
+    <color name="unread_dot">#FF6B35</color>
+
+    <!-- Order status -->
+    <color name="status_pending">#F59E0B</color>
+    <color name="status_confirmed">#3B82F6</color>
+    <color name="status_shipped">#8B5CF6</color>
+    <color name="status_delivered">#22A45D</color>
+    <color name="status_cancelled">#E5484D</color>
+</resources>
