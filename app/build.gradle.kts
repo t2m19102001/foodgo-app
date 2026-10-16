@@ -37,8 +37,9 @@ android {
             }
             buildConfigField("String", "API_BASE_URL", "\"$apiUrl\"")
             optimization {
-                enable = false
+                enable = true
             }
+            proguardFiles("proguard-rules.pro")
         }
     }
     compileOptions {
@@ -47,10 +48,15 @@ android {
     }
 }
 
+val apiBaseUrlProperty = providers.gradleProperty("FOODGO_API_BASE_URL")
+
 tasks.configureEach {
     if (name == "preReleaseBuild") {
+        // Doc property o configuration time va chi bat bien Boolean vao doFirst:
+        // tham chieu truc tiep provider/script trong doFirst se pha configuration cache
+        val hasApiBaseUrl = apiBaseUrlProperty.isPresent
         doFirst {
-            require(providers.gradleProperty("FOODGO_API_BASE_URL").isPresent) {
+            require(hasApiBaseUrl) {
                 "Set -PFOODGO_API_BASE_URL=https://your-api-host/ before building release"
             }
         }
@@ -72,4 +78,5 @@ dependencies {
     implementation(libs.recyclerview)
     implementation(libs.swiperefreshlayout)
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }
