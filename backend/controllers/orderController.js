@@ -4,6 +4,7 @@ import orderModel from "../models/orderModel.js";
 import foodModel from "../models/foodModel.js";
 import notificationModel from "../models/notificationModel.js";
 import { buildPaymentUrl, verifySignature } from "../util/vnpay.js";
+import logger from "../util/logger.js";
 
 const VALID_PAYMENT_METHODS = ["cod", "vnpay"];
 const VALID_STATUSES = ["pending", "confirmed", "shipped", "delivered", "cancelled"];
@@ -62,7 +63,7 @@ const notifyOrderStatus = async (userId, orderId, status) => {
       message: `${message} (#${shortCode(orderId)})`,
     });
   } catch (error) {
-    console.error("Notify order status error:", error);
+    logger.error("Notify order status error:", error);
   }
 };
 
@@ -76,7 +77,7 @@ const notifyOrderPlaced = async (userId, orderId, amount) => {
       )}đ. Chúng tôi sẽ xác nhận trong thời gian sớm nhất.`,
     });
   } catch (error) {
-    console.error("Notify order placed error:", error);
+    logger.error("Notify order placed error:", error);
   }
 };
 
@@ -90,7 +91,7 @@ const notifyPaymentResult = async (userId, orderId, success) => {
         : `Thanh toán VNPay cho đơn hàng #${shortCode(orderId)} không thành công. Vui lòng thử lại.`,
     });
   } catch (error) {
-    console.error("Notify payment result error:", error);
+    logger.error("Notify payment result error:", error);
   }
 };
 
@@ -196,7 +197,7 @@ export const placeOrder = async (req, res) => {
         return existingOrderResponse(res, existing, fingerprintOf(quantities, req.body.address));
       }
     }
-    console.error("Place order error:", error);
+    logger.error("Place order error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi đặt hàng" });
   }
 };
@@ -230,7 +231,7 @@ export const createVnpayPayment = async (req, res) => {
 
     res.json({ success: true, payUrl });
   } catch (error) {
-    console.error("Create VNPay payment error:", error);
+    logger.error("Create VNPay payment error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi tạo thanh toán VNPay" });
   }
 };
@@ -280,7 +281,7 @@ export const handleVnpayReturn = async (req, res) => {
       : "Thanh toan thanh cong! Vui long quay lai ung dung.";
     res.send(`<h3>${message}</h3>`);
   } catch (error) {
-    console.error("Handle VNPay return error:", error);
+    logger.error("Handle VNPay return error:", error);
     res.status(500).send("<h3>Loi xu ly ket qua thanh toan.</h3>");
   }
 };
@@ -293,7 +294,7 @@ export const handleVnpayIpn = async (req, res) => {
     }
     res.json({ RspCode: "00", Message: "Confirm Success" });
   } catch (error) {
-    console.error("Handle VNPay IPN error:", error);
+    logger.error("Handle VNPay IPN error:", error);
     res.json({ RspCode: "99", Message: "Unknown error" });
   }
 };
@@ -327,7 +328,7 @@ export const getMyOrders = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Get my orders error:", error);
+    logger.error("Get my orders error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy danh sách đơn hàng" });
   }
 };
@@ -346,7 +347,7 @@ export const getOrderById = async (req, res) => {
 
     res.json({ success: true, order });
   } catch (error) {
-    console.error("Get order by id error:", error);
+    logger.error("Get order by id error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy thông tin đơn hàng" });
   }
 };
@@ -365,7 +366,7 @@ export const getOrderByRequestId = async (req, res) => {
     }
     res.json({ success: true, orderId: order._id, order });
   } catch (error) {
-    console.error("Get order by request id error:", error);
+    logger.error("Get order by request id error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi kiểm tra đơn hàng" });
   }
 };
@@ -398,7 +399,7 @@ export const cancelOrder = async (req, res) => {
 
     res.json({ success: true, message: "Đã hủy đơn hàng thành công", order: updated });
   } catch (error) {
-    console.error("Cancel order error:", error);
+    logger.error("Cancel order error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi hủy đơn hàng" });
   }
 };
@@ -449,7 +450,7 @@ export const listAllOrders = async (req, res) => {
       pagination: { currentPage: page, totalPages: Math.ceil(total / limit), totalOrders: total },
     });
   } catch (error) {
-    console.error("List all orders error:", error);
+    logger.error("List all orders error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy danh sách đơn hàng" });
   }
 };
@@ -490,7 +491,7 @@ export const getOrderStats = async (req, res) => {
 
     res.json({ success: true, totalRevenue, totalOrders, byStatus, last7Days });
   } catch (error) {
-    console.error("Get order stats error:", error);
+    logger.error("Get order stats error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy thống kê đơn hàng" });
   }
 };
@@ -526,7 +527,7 @@ export const updateOrderStatus = async (req, res) => {
 
     res.json({ success: true, message: "Cập nhật trạng thái thành công", order: updated });
   } catch (error) {
-    console.error("Update order status error:", error);
+    logger.error("Update order status error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi cập nhật trạng thái đơn hàng" });
   }
 };

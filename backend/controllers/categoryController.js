@@ -1,6 +1,8 @@
 import categoryModel from "../models/categoryModel.js";
 import foodModel from "../models/foodModel.js";
 import { deleteImageSafe } from "../util/uploadFile.js";
+import { findWithOptionalPagination, parseOptionalPagination } from "../util/pagination.js";
+import logger from "../util/logger.js";
 
 export const addCategory = async (req, res) => {
   try {
@@ -18,17 +20,22 @@ export const addCategory = async (req, res) => {
     res.status(201).json({ success: true, message: "Thêm danh mục thành công", category });
   } catch (error) {
     if (req.file) await deleteImageSafe(req.file.filename);
-    console.error("Add category error:", error);
+    logger.error("Add category error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi thêm danh mục" });
   }
 };
 
 export const listCategories = async (req, res) => {
   try {
-    const categories = await categoryModel.find({});
-    res.json({ success: true, categories });
+    const pagination = parseOptionalPagination(req.query);
+    if (pagination.invalid) {
+      return res.status(400).json({ success: false, message: "Tham số phân trang không hợp lệ" });
+    }
+
+    const { items, meta } = await findWithOptionalPagination(categoryModel, {}, pagination);
+    res.json({ success: true, categories: items, pagination: meta });
   } catch (error) {
-    console.error("List categories error:", error);
+    logger.error("List categories error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy danh sách danh mục" });
   }
 };
@@ -61,7 +68,7 @@ export const updateCategory = async (req, res) => {
     res.json({ success: true, message: "Cập nhật danh mục thành công", category });
   } catch (error) {
     if (req.file) await deleteImageSafe(req.file.filename);
-    console.error("Update category error:", error);
+    logger.error("Update category error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi cập nhật danh mục" });
   }
 };
@@ -79,7 +86,7 @@ export const removeCategory = async (req, res) => {
     await deleteImageSafe(category.image);
     res.json({ success: true, message: "Xóa danh mục thành công" });
   } catch (error) {
-    console.error("Remove category error:", error);
+    logger.error("Remove category error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi xóa danh mục" });
   }
 };

@@ -53,6 +53,8 @@ export const buildPaymentUrl = ({ txnRef, amount, orderInfo, ipAddr }) => {
 export const verifySignature = (query) => {
   const { vnp_SecureHash, vnp_SecureHashType, ...rest } = query;
   if (!vnp_SecureHash) return false;
-  const expected = sign(rest, process.env.VNPAY_HASH_SECRET);
-  return expected.toLowerCase() === String(vnp_SecureHash).toLowerCase();
+  const expected = Buffer.from(sign(rest, process.env.VNPAY_HASH_SECRET).toLowerCase(), "utf-8");
+  const received = Buffer.from(String(vnp_SecureHash).toLowerCase(), "utf-8");
+  // So sanh hang thoi gian: `===` tra ve som o byte dau khac nhau, de lo thong tin cho tan cong do chu ky
+  return expected.length === received.length && crypto.timingSafeEqual(expected, received);
 };

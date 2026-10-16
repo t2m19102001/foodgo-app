@@ -1,4 +1,5 @@
 import addressModel from "../models/addressModel.js";
+import logger from "../util/logger.js";
 
 const validateFields = ({ fullName, phone, address }) => {
   if (![fullName, phone, address].every((value) => typeof value === "string" && value.trim().length > 0)) {
@@ -20,7 +21,7 @@ export const getMyAddresses = async (req, res) => {
       .sort({ isDefault: -1, createdAt: -1 });
     res.json({ success: true, addresses });
   } catch (error) {
-    console.error("Get my addresses error:", error);
+    logger.error("Get my addresses error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy danh sách địa chỉ" });
   }
 };
@@ -53,7 +54,7 @@ export const addAddress = async (req, res) => {
 
     res.status(201).json({ success: true, message: "Đã lưu địa chỉ", address: created });
   } catch (error) {
-    console.error("Add address error:", error);
+    logger.error("Add address error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lưu địa chỉ" });
   }
 };
@@ -85,7 +86,7 @@ export const updateAddress = async (req, res) => {
 
     res.json({ success: true, message: "Cập nhật địa chỉ thành công", address });
   } catch (error) {
-    console.error("Update address error:", error);
+    logger.error("Update address error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi cập nhật địa chỉ" });
   }
 };
@@ -106,7 +107,7 @@ export const setDefaultAddress = async (req, res) => {
 
     res.json({ success: true, message: "Đã đặt làm địa chỉ mặc định", address });
   } catch (error) {
-    console.error("Set default address error:", error);
+    logger.error("Set default address error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi đặt địa chỉ mặc định" });
   }
 };
@@ -136,7 +137,7 @@ export const deleteAddress = async (req, res) => {
 
     res.json({ success: true, message: "Đã xóa địa chỉ" });
   } catch (error) {
-    console.error("Delete address error:", error);
+    logger.error("Delete address error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi xóa địa chỉ" });
   }
 };

@@ -1,4 +1,5 @@
 import notificationModel from "../models/notificationModel.js";
+import logger from "../util/logger.js";
 
 export const getMyNotifications = async (req, res) => {
   try {
@@ -9,7 +10,7 @@ export const getMyNotifications = async (req, res) => {
 
     res.json({ success: true, notifications, unreadCount });
   } catch (error) {
-    console.error("Get notifications error:", error);
+    logger.error("Get notifications error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy thông báo" });
   }
 };
@@ -30,7 +31,7 @@ export const markAsRead = async (req, res) => {
 
     res.json({ success: true, message: "Đã đánh dấu đã đọc" });
   } catch (error) {
-    console.error("Mark as read error:", error);
+    logger.error("Mark as read error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi cập nhật thông báo" });
   }
 };
@@ -40,7 +41,7 @@ export const markAllAsRead = async (req, res) => {
     await notificationModel.updateMany({ userId: req.userId, isRead: false }, { isRead: true });
     res.json({ success: true, message: "Đã đánh dấu tất cả đã đọc" });
   } catch (error) {
-    console.error("Mark all as read error:", error);
+    logger.error("Mark all as read error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi cập nhật thông báo" });
   }
 };

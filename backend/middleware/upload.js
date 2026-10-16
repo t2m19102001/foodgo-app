@@ -3,6 +3,7 @@ import path from "path";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { uploadsDir, deleteImageSafe } from "../util/uploadFile.js";
+import logger from "../util/logger.js";
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -67,7 +68,7 @@ export const validateUploadedImage = async (req, res, next) => {
     }
     if (isSupportedImage(bytes, path.extname(req.file.filename).toLowerCase())) return next();
   } catch (error) {
-    console.error("Validate upload error:", error);
+    logger.error("Validate upload error:", error);
   }
   await deleteImageSafe(req.file.filename);
   res.status(400).json({ success: false, message: "Nội dung ảnh không hợp lệ" });

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import validator from "validator";
 import userModel from "../models/userModel.js";
 import { deleteImageSafe } from "../util/uploadFile.js";
+import logger from "../util/logger.js";
 
 const createToken = (id, isAdmin = false, tokenVersion = 0) => {
   return jwt.sign({ id, isAdmin, tokenVersion }, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -48,7 +49,7 @@ export const registerUser = async (req, res) => {
       isAdmin: newUser.isAdmin,
     });
   } catch (error) {
-    console.error("Register error:", error);
+    logger.error("Register error:", error);
     res.status(500).json({ success: false, message: "Lỗi hệ thống khi đăng ký" });
   }
 };
@@ -86,7 +87,7 @@ export const loginUser = async (req, res) => {
       image: user.image || "",
     });
   } catch (error) {
-    console.error("Login error:", error);
+    logger.error("Login error:", error);
     res.status(500).json({ success: false, message: "Lỗi hệ thống khi đăng nhập" });
   }
 };
@@ -99,7 +100,7 @@ export const getProfile = async (req, res) => {
     }
     res.json({ success: true, user });
   } catch (error) {
-    console.error("Get profile error:", error);
+    logger.error("Get profile error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi tải thông tin cá nhân" });
   }
 };
@@ -131,7 +132,7 @@ export const updateProfile = async (req, res) => {
     res.json({ success: true, message: "Cập nhật thông tin thành công", user: updatedUser });
   } catch (error) {
     if (req.file) await deleteImageSafe(req.file.filename);
-    console.error("Update profile error:", error);
+    logger.error("Update profile error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi cập nhật thông tin" });
   }
 };
@@ -164,7 +165,7 @@ export const changePassword = async (req, res) => {
 
     res.json({ success: true, message: "Đổi mật khẩu thành công" });
   } catch (error) {
-    console.error("Change password error:", error);
+    logger.error("Change password error:", error);
     res.status(500).json({ success: false, message: "Lỗi hệ thống khi đổi mật khẩu" });
   }
 };

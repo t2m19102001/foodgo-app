@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import reviewModel from "../models/reviewModel.js";
 import orderModel from "../models/orderModel.js";
+import logger from "../util/logger.js";
 
 const isValidRating = (rating) => Number.isInteger(Number(rating)) && rating >= 1 && rating <= 5;
 
@@ -45,7 +46,7 @@ export const addReview = async (req, res) => {
 
     res.status(201).json({ success: true, message: "Đánh giá thành công", review });
   } catch (error) {
-    console.error("Add review error:", error);
+    logger.error("Add review error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi thêm đánh giá" });
   }
 };
@@ -59,7 +60,7 @@ export const getFoodReviews = async (req, res) => {
 
     res.json({ success: true, reviews });
   } catch (error) {
-    console.error("Get food reviews error:", error);
+    logger.error("Get food reviews error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy đánh giá" });
   }
 };
@@ -85,7 +86,7 @@ export const updateReview = async (req, res) => {
 
     res.json({ success: true, message: "Cập nhật đánh giá thành công", review });
   } catch (error) {
-    console.error("Update review error:", error);
+    logger.error("Update review error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi cập nhật đánh giá" });
   }
 };
@@ -104,7 +105,7 @@ export const deleteReview = async (req, res) => {
     await reviewModel.findByIdAndDelete(req.params.id);
     res.json({ success: true, message: "Xóa đánh giá thành công" });
   } catch (error) {
-    console.error("Delete review error:", error);
+    logger.error("Delete review error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi xóa đánh giá" });
   }
 };
