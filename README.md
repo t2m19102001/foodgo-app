@@ -1,259 +1,136 @@
 # FoodGo — Ứng dụng đặt & giao đồ ăn
 
-Đồ án môn Lập trình ứng dụng di động. Hệ thống gồm **ứng dụng Android (Java)** cho khách hàng và quản trị viên, kết hợp **backend REST API Node.js + MongoDB**.
+Đồ án môn Lập trình ứng dụng di động: **app Android (Java, MVVM)** cho khách hàng và quản trị viên, **backend REST API Node.js + MongoDB**.
 
 | | |
 |---|---|
-| Ngôn ngữ app | Java (không dùng Kotlin / Compose) |
-| Kiến trúc app | MVVM (Activity/Fragment → ViewModel → Repository → Retrofit) |
+| App | Java, MVVM (Activity/Fragment → ViewModel → Repository → Retrofit), minSdk 24 |
 | Backend | Node.js + Express + MongoDB (Mongoose) |
-| Xác thực | JWT (hạn 7 ngày), mật khẩu băm bằng bcrypt |
+| Xác thực | JWT 7 ngày, mật khẩu băm bcrypt, phân quyền user/admin |
+| Thanh toán | COD và VNPay (sandbox) |
 
 ---
 
 ## 1. Tính năng
 
-### Khách hàng
-- Đăng ký, đăng nhập, tự động đăng nhập lại bằng token đã lưu.
-- Trang chủ: danh sách món, lọc theo danh mục, tìm kiếm theo tên, kéo để làm mới, thêm nhanh vào giỏ.
-- Món hết hàng được làm mờ, gắn nhãn **Hết hàng** và không cho thêm vào giỏ.
-- Chi tiết món: ảnh, giá, mô tả, danh sách đánh giá của người dùng khác.
-- Giỏ hàng lưu trên máy (SharedPreferences): tăng/giảm số lượng, xóa món, badge số lượng trên thanh tiêu đề.
-- Đặt hàng COD: nhập người nhận, số điện thoại, địa chỉ, ghi chú.
-- Lịch sử đơn hàng: phân trang vô hạn, **lọc theo trạng thái**.
-- Chi tiết đơn: xem món, địa chỉ, tổng tiền, hủy đơn kèm lý do (khi đơn chưa giao).
-- Theo dõi đơn hàng theo 4 bước, **tự cập nhật mỗi 5 giây**.
-- Đánh giá món (1–5 sao + nhận xét) từ đơn hàng **đã giao**.
-- Thông báo: danh sách, dấu chưa đọc, đánh dấu đã đọc / đã đọc tất cả, **badge số chưa đọc** ở thanh điều hướng.
-- Tài khoản: xem và sửa hồ sơ (kèm tải ảnh đại diện), đổi mật khẩu, đăng xuất.
+**Khách hàng:** đăng ký/đăng nhập (tự đăng nhập lại bằng token đã lưu) · trang chủ có tìm kiếm, lọc danh mục, món hết hàng bị làm mờ · chi tiết món kèm đánh giá · giỏ hàng lưu trên máy · sổ địa chỉ (có địa chỉ mặc định) · đặt hàng COD/VNPay · lịch sử đơn (phân trang, lọc trạng thái) · hủy đơn kèm lý do · theo dõi đơn 4 bước tự cập nhật mỗi 5 giây · đánh giá món đã nhận · thông báo kèm badge số chưa đọc · sửa hồ sơ, đổi mật khẩu.
 
-### Quản trị viên (tài khoản có `isAdmin = true`)
-Mục **QUẢN TRỊ** trong trang Tài khoản chỉ hiện với tài khoản admin, gồm 4 màn hình:
-- **Quản lý đơn hàng**: xem toàn bộ đơn của mọi khách hàng, lọc theo trạng thái, phân trang vô hạn. Chuyển trạng thái đơn theo đúng luồng cho phép: `Chờ xác nhận → Đã xác nhận → Đang giao → Đã giao`, hoặc hủy đơn (có bước xác nhận lại). Mỗi lần đổi trạng thái, hệ thống **tự sinh thông báo** cho khách hàng.
-- **Quản lý món ăn**: thêm/sửa/xóa món ăn kèm ảnh, lọc theo danh mục, bật/tắt "hết hàng" ngay trên danh sách.
-- **Quản lý danh mục**: thêm/sửa/xóa danh mục kèm ảnh; không xóa/đổi tên được danh mục đang có món ăn thuộc về nó.
-- **Thống kê doanh thu**: tổng doanh thu các đơn đã giao, số đơn theo từng trạng thái, doanh thu 7 ngày gần nhất.
+**Quản trị viên** (`isAdmin = true`, mục QUẢN TRỊ trong trang Tài khoản): quản lý đơn hàng (lọc trạng thái, chuyển trạng thái theo đúng luồng, mỗi lần đổi đều sinh thông báo cho khách) · quản lý món ăn (CRUD kèm ảnh, bật/tắt hết hàng) · quản lý danh mục (không xóa/đổi tên danh mục đang có món) · thống kê doanh thu (tổng, theo trạng thái, 7 ngày gần nhất).
 
 ---
 
-## 2. Kiến trúc
+## 2. Chạy dự án
 
-```
-┌──────────────────────── ANDROID APP (Java, MVVM) ────────────────────────┐
-│                                                                          │
-│  Activity / Fragment  ──observe──►  ViewModel  ──►  Repository           │
-│  (hiển thị, bắt sự kiện)            (LiveData)      (gọi API / local)    │
-│                                                          │               │
-│                                        ┌─────────────────┴────────┐      │
-│                                        │                          │      │
-│                                 ApiService (Retrofit)      CartRepository │
-│                                        │                   (SharedPrefs)  │
-│                                 AuthInterceptor                          │
-│                                 (tự gắn Bearer token)                    │
-└────────────────────────────────────────┼─────────────────────────────────┘
-                                         │ HTTP / JSON
-┌────────────────────────────────────────▼─────────────────────────────────┐
-│                      BACKEND (Node.js + Express)                         │
-│                                                                          │
-│   Router ──► Middleware (auth / admin / upload) ──► Controller ──► Model  │
-│                                                                 (Mongoose)│
-└────────────────────────────────────────┼─────────────────────────────────┘
-                                         ▼
-                                   MongoDB (Atlas)
-```
+**Yêu cầu:** Node.js 18+ · Android Studio, JDK 17+, Android SDK API 37 · MongoDB Atlas hoặc MongoDB local.
 
-### Cấu trúc thư mục
-
-```
-TranMinhMan_LeNgocNhan_DoAn/
-├── app/src/main/
-│   ├── java/com/tranminhman_lengocnhan_doan/
-│   │   ├── adapter/        RecyclerView adapter (món, giỏ, đơn, đánh giá, thông báo, đơn admin)
-│   │   ├── api/            ApiClient, ApiService (Retrofit), AuthInterceptor
-│   │   ├── model/          Model dữ liệu + model/response (request & response body)
-│   │   ├── repository/     Tầng truy cập dữ liệu (API và giỏ hàng local)
-│   │   ├── ui/             auth, home, cart, order, review, notification, profile, admin, main
-│   │   └── util/           Constants, SessionManager, CurrencyUtils, DateUtils, ImageUrlHelper,
-│   │                       OrderStatusHelper, ApiErrorUtils
-│   └── res/                layout, drawable (vector tự vẽ), values (colors, styles, themes)
-└── backend/
-    ├── config/db.js        Kết nối MongoDB
-    ├── controllers/        auth, food, category, order, review, notification
-    ├── middleware/         auth.js (JWT + phân quyền), upload.js (Multer)
-    ├── models/             user, food, category, order, review, notification
-    ├── routers/            Khai báo route cho từng nhóm API
-    ├── uploads/            Ảnh món ăn, danh mục, ảnh đại diện
-    └── server.js           Điểm khởi động
-```
-
----
-
-## 3. Cài đặt và chạy
-
-### Yêu cầu
-- Node.js 18 trở lên
-- Android Studio với JDK 17 trở lên, Android SDK API 37, emulator hoặc máy thật Android 7.0+ (API 24)
-- MongoDB Atlas hoặc MongoDB cài trên máy
-
-### Bước 1 — Backend
+### Backend
 
 ```bash
 cd backend
 npm install
-cp .env.example .env     # Windows: copy .env.example .env
+cp .env.example .env     # rồi điền giá trị
+npm run dev              # hoặc npm start
 ```
 
-Mở `.env` và điền:
+`.env` cần: `PORT`, `MONGO_URI`, `JWT_SECRET`, `NODE_ENV`, `CORS_ORIGINS`, và nhóm `VNPAY_*` nếu dùng VNPay (đăng ký sandbox tại https://sandbox.vnpayment.vn/devreg/).
 
-```
-PORT=5000
-MONGO_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/delivery_app
-JWT_SECRET=mot_chuoi_bi_mat_dai_va_ngau_nhien
-NODE_ENV=development
-CORS_ORIGINS=
-```
+> `JWT_SECRET` phải dài **tối thiểu 32 ký tự**, thiếu hoặc quá ngắn thì server từ chối khởi động — vì với secret rỗng, thư viện JWT vẫn ký ra token hợp lệ nên ai cũng tự tạo được token admin.
 
-Khi dùng client web ở môi trường production, đặt `CORS_ORIGINS` thành danh sách origin được phép, ngăn cách bằng dấu phẩy. Ứng dụng Android không cần CORS.
+Log thành công: `MongoDB connected` → `Server is running on http://localhost:5000`.
 
-Chạy server:
+### Android
+
+1. Mở thư mục gốc bằng Android Studio, chờ Gradle sync, tạo `local.properties` trỏ `sdk.dir` tới Android SDK.
+2. Chạy app (`Shift + F10`) hoặc build bằng lệnh:
 
 ```bash
-npm run dev      # tự khởi động lại khi sửa code (nodemon)
-# hoặc
-npm start
+bash gradlew assembleDebug    # APK: app/build/outputs/apk/debug/
+bash gradlew installDebug     # cài vào thiết bị đang kết nối
 ```
 
-Log thành công:
-
-```
-MongoDB connected
-Server is running on http://localhost:5000
-```
-
-### Bước 2 — Android
-
-1. Mở thư mục gốc project bằng Android Studio, chờ Gradle sync xong.
-2. Tạo `local.properties` với `sdk.dir` trỏ tới Android SDK trên máy. Bản debug dùng `http://10.0.2.2:5000/` cho emulator. Bản release nhận URL HTTPS qua Gradle property `FOODGO_API_BASE_URL`; ví dụ `bash gradlew assembleRelease -PFOODGO_API_BASE_URL=https://api.example.com/`. Gradle chặn build release nếu thiếu property này. Máy thật cần một backend HTTPS có thể truy cập từ thiết bị.
-
-3. Chạy app (`Shift + F10`) hoặc build bằng dòng lệnh:
+Bản debug dùng `http://10.0.2.2:5000/` (địa chỉ localhost của máy host khi chạy emulator) và cho phép HTTP. Bản release yêu cầu URL HTTPS qua Gradle property, từ chối cleartext, không ghi log body, và bật R8:
 
 ```bash
-bash gradlew assembleDebug     # APK: app/build/outputs/apk/debug/app-debug.apk
-bash gradlew installDebug      # cài trực tiếp vào thiết bị đang kết nối
+bash gradlew assembleRelease -PFOODGO_API_BASE_URL=https://api.example.com/
 ```
 
-> Chỉ bản debug cho phép HTTP để chạy với backend local. Bản release từ chối cleartext và không ghi log BODY.
+### Tạo tài khoản
 
-### Bước 3 — Tạo tài khoản
-
-Hệ thống **không có tài khoản mặc định**, mọi tài khoản nằm trong MongoDB. Đăng ký ngay trong app (mật khẩu tối thiểu 6 ký tự). Tạo tài khoản demo riêng cho mỗi môi trường và chuyển thông tin đăng nhập qua kênh riêng; không đưa mật khẩu vào repository.
-
-Tài khoản đăng ký từ app luôn là khách hàng. Để có quyền admin, sửa trực tiếp trong MongoDB:
+Không có tài khoản mặc định. Đăng ký trong app (mật khẩu ≥ 6 ký tự) rồi cấp quyền admin trực tiếp trong MongoDB, sau đó đăng xuất/đăng nhập lại để app nhận quyền mới:
 
 ```js
-// Mongo shell hoặc MongoDB Compass
-db.users.updateOne({ email: "<email-admin-vua-dang-ky>" }, { $set: { isAdmin: true } })
+db.users.updateOne({ email: "<email-vua-dang-ky>" }, { $set: { isAdmin: true } })
 ```
 
-Đăng xuất rồi đăng nhập lại để app nhận quyền mới (quyền được lưu trong token và session).
+---
+
+## 3. API
+
+Base URL `http://localhost:5000`. Token gửi ở header `Authorization: Bearer <token>`. Mọi phản hồi theo dạng `{ success, message, ...dữ liệu }`.
+Quyền: **P** = công khai, **U** = cần đăng nhập, **A** = cần admin.
+
+Import `docs/foodgo.postman_collection.json` vào Postman để bấm thử ngay (chạy *Auth / Đăng nhập* trước, token tự lưu cho các request sau).
+
+| Nhóm | Endpoint | Quyền | Ghi chú |
+|---|---|---|---|
+| Health | `GET /api/health` | P | `200` khi MongoDB đã kết nối, `503` khi chưa |
+| Auth | `POST /api/auth/register` · `POST /login` | P | Trả token. Giới hạn 10 lần/giờ (register) và 10 lần **sai**/15 phút (login) mỗi IP |
+| | `GET /api/auth/profile` · `PUT /profile` · `PUT /change-password` | U | `PUT /profile` là multipart, field ảnh tên `image`. Đổi mật khẩu làm token cũ hết hiệu lực |
+| Food | `GET /api/food` · `GET /:id` · `GET /category/:category` | P | `page`/`limit` tùy chọn (`limit` ≤ 100); không truyền thì trả như cũ, chặn trên 200 bản ghi |
+| | `POST /api/food` · `PUT /:id` · `DELETE /:id` | A | Multipart; khi sửa, mọi field đều optional kể cả `isAvailable` |
+| Category | `GET /api/category` | P | Phân trang tùy chọn như `/api/food` |
+| | `POST /api/category` · `PUT /:id` · `DELETE /:id` | A | Chặn xóa/đổi tên danh mục đang có món |
+| Order | `POST /api/order` | U | Gửi kèm `clientRequestId` (UUID); gửi lại cùng mã trả về đúng đơn cũ. Server tự tra giá từ DB, số tiền client gửi lên bị bỏ qua |
+| | `GET /api/order/request/:clientRequestId` | U | Dò lại đơn sau khi mất mạng/timeout |
+| | `GET /api/order/my?page=&limit=&status=` · `GET /:id` · `PUT /:id/cancel` | U | Chỉ thấy/hủy đơn của mình; hủy được khi đơn `pending` hoặc `confirmed` |
+| | `POST /api/order/:id/vnpay/create-payment` | U | Trả `payUrl` để mở cổng VNPay |
+| | `GET /api/order/vnpay/return` · `GET /vnpay/ipn` | P | VNPay gọi về; xác thực chữ ký HMAC rồi cập nhật `paymentStatus` |
+| | `GET /api/order/list?page=&limit=&status=` · `GET /stats` | A | Toàn bộ đơn (kèm field `customer`) và thống kê doanh thu |
+| | `PUT /api/order/:id/status` | A | Trả `409` nếu trạng thái đã bị đổi trước đó |
+| Review | `GET /api/review/food/:foodId` | P | |
+| | `POST /api/review` · `PUT /:id` · `DELETE /:id` | U | Chỉ đánh giá món đã nhận trong đơn `delivered`, mỗi người một đánh giá cho mỗi món |
+| Notification | `GET /api/notification` · `PUT /:id/read` · `PUT /read-all` | U | Trả kèm `unreadCount` |
+| Address | `GET /api/address` · `POST /` · `PUT /:id` · `PUT /:id/default` · `DELETE /:id` | U | Sổ địa chỉ của riêng từng tài khoản |
+
+**Luồng trạng thái đơn:** `pending → confirmed → shipped → delivered`, hoặc `cancelled` từ `pending`/`confirmed`. `delivered` và `cancelled` là trạng thái kết thúc.
 
 ---
 
-## 4. Danh sách API
+## 4. Kiểm thử
 
-Base URL: `http://localhost:5000`
+```bash
+cd backend && npm test              # 34 unit test (node:test, mock model nên không cần MongoDB)
+bash gradlew :app:testDebugUnitTest # 16 unit test JVM (JUnit 4 + Robolectric)
 
-Cột **Quyền**: `Công khai` = không cần token · `User` = cần đăng nhập · `Admin` = cần tài khoản admin.
-Token gửi kèm ở header `Authorization: Bearer <token>` (middleware cũng chấp nhận header `token`).
-
-### Auth — `/api/auth`
-| Method | Endpoint | Quyền | Mô tả |
-|---|---|---|---|
-| POST | `/register` | Công khai | Đăng ký, trả về token |
-| POST | `/login` | Công khai | Đăng nhập, trả về token + `isAdmin` |
-| GET | `/profile` | User | Lấy thông tin cá nhân |
-| PUT | `/profile` | User | Cập nhật hồ sơ (multipart, field ảnh tên `image`) |
-| PUT | `/change-password` | User | Đổi mật khẩu |
-
-### Food — `/api/food`
-| Method | Endpoint | Quyền | Mô tả |
-|---|---|---|---|
-| GET | `/` | Công khai | Danh sách món |
-| GET | `/:id` | Công khai | Chi tiết một món |
-| GET | `/category/:category` | Công khai | Món theo danh mục |
-| POST | `/` | Admin | Thêm món (multipart) |
-| PUT | `/:id` | Admin | Sửa món (multipart, mọi field đều optional, kể cả `isAvailable`) |
-| DELETE | `/:id` | Admin | Xóa món |
-
-### Category — `/api/category`
-| Method | Endpoint | Quyền | Mô tả |
-|---|---|---|---|
-| GET | `/` | Công khai | Danh sách danh mục |
-| POST | `/` | Admin | Thêm danh mục (multipart) |
-| PUT | `/:id` | Admin | Sửa danh mục (multipart) |
-| DELETE | `/:id` | Admin | Xóa danh mục |
-
-### Order — `/api/order`
-| Method | Endpoint | Quyền | Mô tả |
-|---|---|---|---|
-| POST | `/` | User | Đặt hàng với `clientRequestId` UUID. Server tự tra giá/tính tổng tiền; gửi lại cùng mã và nội dung sẽ trả đơn cũ |
-| GET | `/request/:clientRequestId` | User | Kiểm tra đơn theo mã yêu cầu sau timeout (chỉ thấy đơn của mình) |
-| GET | `/my?page=&limit=&status=` | User | Đơn của tôi, phân trang, lọc theo trạng thái |
-| GET | `/:id` | User | Chi tiết đơn (chỉ chủ đơn hoặc admin) |
-| PUT | `/:id/cancel` | User | Hủy đơn kèm lý do (chỉ khi `pending` hoặc `confirmed`) |
-| GET | `/list?page=&limit=&status=` | Admin | Toàn bộ đơn, kèm thông tin khách trong field `customer` |
-| PUT | `/:id/status` | Admin | Đổi trạng thái theo `pending → confirmed → shipped → delivered`, có thể hủy từ `pending/confirmed`; trả `409` khi trạng thái đã thay đổi |
-| GET | `/stats` | Admin | Thống kê: `totalRevenue`, `totalOrders`, số đơn + doanh thu theo từng trạng thái (`byStatus`), doanh thu 7 ngày gần nhất (`last7Days`) |
-
-### Review — `/api/review`
-| Method | Endpoint | Quyền | Mô tả |
-|---|---|---|---|
-| GET | `/food/:foodId` | Công khai | Đánh giá của một món |
-| POST | `/` | User | Thêm đánh giá. **Chỉ được đánh giá món đã nhận trong đơn `delivered`**, mỗi người một đánh giá cho mỗi món |
-| PUT | `/:id` | User | Sửa đánh giá của chính mình |
-| DELETE | `/:id` | User | Xóa đánh giá của chính mình |
-
-### Notification — `/api/notification`
-| Method | Endpoint | Quyền | Mô tả |
-|---|---|---|---|
-| GET | `/` | User | Danh sách thông báo + `unreadCount` |
-| PUT | `/:id/read` | User | Đánh dấu một thông báo đã đọc |
-| PUT | `/read-all` | User | Đánh dấu tất cả đã đọc |
-
-Mọi phản hồi theo dạng `{ "success": true/false, "message": "...", ...dữ liệu }`.
-
-### Trạng thái đơn hàng
-
-```
-pending ──► confirmed ──► shipped ──► delivered
-   │            │
-   └────────────┴──► cancelled
+# Smoke test end-to-end: 88 kiểm tra gọi API thật (cần server đang chạy)
+cd backend && npm start             # terminal 1 — khởi động lại để reset bộ đếm rate limit
+cd backend && npm run test:e2e      # terminal 2
 ```
 
-`delivered` và `cancelled` là trạng thái kết thúc, không đổi tiếp được. Khách chỉ hủy được đơn ở `pending` hoặc `confirmed`.
+> `npm run test:e2e` ghi dữ liệu thật vào MongoDB trong `.env` rồi **xóa sạch ở cuối** (mọi bản ghi đều có tiền tố `e2e-`/`E2E `). Nó tự cấp quyền admin cho tài khoản test để chạy được cả nhóm API admin.
+
+Smoke test đi qua: health + security headers + CORS · đăng ký/đăng nhập/phân quyền · hồ sơ và upload ảnh · CRUD danh mục/món ăn kèm các ràng buộc · sổ địa chỉ · đặt hàng (gồm 3 request đồng thời cùng một `clientRequestId` chỉ tạo 1 đơn) · thông báo · toàn bộ luồng VNPay (chữ ký giả bị từ chối và không đổi `paymentStatus`, chữ ký thật thì đơn sang `paid` + `confirmed`, gọi IPN lần 2 không xử lý trùng) · đánh giá · chuyển trạng thái đơn · hủy đơn · thống kê · đổi mật khẩu làm token cũ hết hiệu lực · rate limit trả `429` kèm `Retry-After`.
+
+Unit test đang bao phủ: luồng trạng thái đơn và `409` khi trạng thái cũ · đặt hàng idempotent kể cả 2 request đồng thời · thống kê doanh thu · chặn email/mật khẩu không hợp lệ trước khi truy vấn DB · chỉ lưu bcrypt hash · đổi mật khẩu làm hết hiệu lực token cũ · chỉ đánh giá được món đã nhận · mọi truy vấn thông báo bị khóa theo `userId` · phân trang tùy chọn · chữ ký VNPay bị sửa hoặc sai secret đều bị từ chối · ảnh phải khớp magic byte · phía Android: `OrderStatusHelper`, `ApiErrorUtils`, `DateUtils`, `ImageUrlHelper`, `PaymentStatusHelper` và `CartRepository` (gộp số lượng, trừ đúng phần đã đặt, giỏ hàng tách riêng theo tài khoản).
 
 ---
 
-## 5. Kịch bản demo
+## 5. Quyết định kỹ thuật
 
-1. Đăng nhập tài khoản khách hàng → trang chủ: tìm kiếm, lọc danh mục, xem món hết hàng bị làm mờ.
-2. Thêm món vào giỏ (badge tăng) → sửa số lượng trong giỏ → thanh toán COD → đặt hàng.
-3. Mở Thông báo: có thông báo "Đặt hàng thành công" (badge trên thanh điều hướng sáng).
-4. Đăng xuất, đăng nhập bằng tài khoản admin → **Tài khoản → Quản lý đơn hàng** → chuyển đơn lần lượt `Đã xác nhận → Đang giao → Đã giao`.
-5. Đăng nhập lại tài khoản khách → mở Theo dõi đơn: 4 bước tự sáng dần (tự làm mới mỗi 5 giây), mỗi lần đổi trạng thái đều có thông báo mới.
-6. Mở đơn đã giao → bấm **Đánh giá món này** → chọn sao, nhập nhận xét → xem đánh giá hiện ở trang chi tiết món.
-7. Thử đánh giá một món chưa từng mua → bị backend từ chối (kiểm tra ràng buộc nghiệp vụ).
-8. Lọc đơn theo trạng thái ở Lịch sử đơn; hủy một đơn `Chờ xác nhận` kèm lý do.
+- **Không tin dữ liệu client:** khi đặt hàng, server tra lại tên/giá/ảnh từ DB, gộp dòng trùng, chặn món `isAvailable = false` rồi tự cộng tổng tiền.
+- **Đặt hàng idempotent:** `clientRequestId` + unique index, nên mất mạng rồi bấm lại không tạo đơn trùng; đổi trạng thái dùng optimistic concurrency (`409` khi đã có người đổi trước).
+- **Phần cứng hóa HTTP:** `helmet()` cho security headers, `express-rate-limit` chặn brute-force ở `/login` và `/register`. CORS chỉ cho các origin trong `CORS_ORIGINS`; khi danh sách rỗng và không phải production thì chỉ `localhost` được phép.
+- **Upload:** Multer giới hạn 5MB, kiểm tra **magic byte** của nội dung thật chứ không chỉ phần mở rộng; ảnh phục vụ tĩnh tại `/uploads`.
+- **Log & health:** mọi log đi qua `util/logger.js` (có timestamp + level), mỗi request được log kèm status và thời gian xử lý; `GET /api/health` để nơi triển khai probe được.
+- **R8 ở bản release:** `app/proguard-rules.pro` giữ tên field của `com.foodgo_app.model.**` vì Gson đọc dữ liệu theo tên field — nếu để R8 đổi tên, JSON sẽ parse ra `null` chỉ ở bản release.
+- **Chữ ký VNPay:** so sánh HMAC bằng `crypto.timingSafeEqual` thay vì `===`.
 
----
+## 6. Giới hạn đã biết
 
-## 6. Ghi chú kỹ thuật
+Những điểm dưới đây là lựa chọn có ý thức trong phạm vi đồ án:
 
-- **Không tin dữ liệu client**: khi đặt hàng, server tra lại tên/giá/ảnh từ MongoDB, gộp các dòng trùng món, chặn món `isAvailable = false` rồi tự cộng tổng tiền. Số tiền do app gửi lên bị bỏ qua.
-- **Phân quyền**: `authMiddleware` xác thực JWT và kiểm tra tài khoản còn hoạt động (`isActive`); `adminMiddleware` kiểm tra thêm `isAdmin`. Màn admin trong app cũng tự kiểm tra session trước khi mở.
-- **Theo dõi đơn bằng polling 5 giây** thay vì push notification: đủ cho bài toán theo dõi trong thời gian ngắn, không phụ thuộc hạ tầng ngoài (Firebase). Dừng polling khi đơn đã `delivered` hoặc `cancelled`.
-- **Giỏ hàng lưu local** bằng SharedPreferences + Gson, không cần API giỏ hàng.
-- **API admin trả `customer` riêng** thay vì `populate` trực tiếp vào `userId`, để model `Order` phía Android giữ `userId` là chuỗi và Gson không lỗi kiểu.
-- **Ảnh**: upload bằng Multer, giới hạn 5MB, chỉ nhận `.jpg .jpeg .png .gif .webp`; ảnh phục vụ tĩnh tại `/uploads`. `ImageUrlHelper` ghép tên file thành URL đầy đủ.
-
----
+- **Token lưu trong SharedPreferences chưa mã hóa.** `EncryptedSharedPreferences` đã bị Google deprecate (không còn bản phát hành mới), cách đúng hiện nay là Keystore + Tink/DataStore — thay đổi lớn hơn giá trị mang lại ở quy mô này. Rủi ro chỉ hiện thực hóa trên máy đã root; `allowBackup`/`dataExtractionRules` đã loại các prefs này khỏi backup và chuyển thiết bị.
+- **Theo dõi đơn bằng polling 5 giây** thay vì WebSocket/push: không phụ thuộc hạ tầng ngoài, đủ cho thời gian theo dõi ngắn; đánh đổi là tốn request khi nhiều người theo dõi cùng lúc.
+- **Ảnh lưu trên đĩa server** (`backend/uploads/`) thay vì S3/Cloudinary: đủ cho một instance, nhưng chặn chạy nhiều instance và chưa có sao lưu.
+- **Chưa có CI/CD, Docker:** test chạy bằng lệnh tay như mục 4.
+- **`npm audit` cảnh báo ở `nodemon`** (`chokidar` → `braces`): chỉ là devDependency, không nằm trong code chạy thật; `npm audit fix --force` sẽ hạ `nodemon` về bản 1.x nên không đáng đổi.
