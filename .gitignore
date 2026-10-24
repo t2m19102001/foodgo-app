@@ -19,3 +19,6 @@ backend/node_modules/
 backend/.env
 backend/uploads/*
 !backend/uploads/.gitkeep
+
+# Cau hinh rieng cua IDE
+.vscode/
