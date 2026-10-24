@@ -1,11 +1,16 @@
-// Smoke test end-to-end: goi API that vao server dang chay + MongoDB trong .env.
+// Smoke test end-to-end: goi API that vao server dang chay + PostgreSQL trong .env.
 //
 //   cd backend && npm start           (terminal 1 - nen khoi dong lai de reset bo dem rate limit)
 //   cd backend && npm run test:e2e    (terminal 2)
 //
-// Du lieu test deu co tien to "e2e-"/"E2E " va duoc xoa sach o cuoi, ke ca khi co buoc fail.
-import mongoose from "mongoose";
+// Du lieu test deu co tien to "e2e-"/"E2E " va duoc xoa sach o cuoi, ke ca khi co
+// buoc fail - ke ca anh da upload (ban truoc chi xoa ban ghi DB nen moi lan chay
+// de lai ~8 file mo coi trong uploads/).
 import "dotenv/config";
+import pg from "pg";
+import { unlink } from "node:fs/promises";
+import path from "node:path";
+import { uploadsDir } from "../util/uploadFile.js";
 import crypto_node from "node:crypto";
 import querystring from "node:querystring";
 import { verifySignature } from "../util/vnpay.js";
@@ -18,6 +23,30 @@ const signVnpay = (params) => {
   }
   const data = querystring.stringify(sorted, undefined, undefined, { encodeURIComponent: (v) => v });
   return crypto_node.createHmac("sha512", process.env.VNPAY_HASH_SECRET).update(Buffer.from(data, "utf-8")).digest("hex");
+};
+
+// Script nay GHI du lieu that va cap quyen admin truc tiep trong DB. Ban truoc
+// khong co guard nao: neu .env dang tro vao DB production thi no xoa du lieu that.
+const DB_URL = process.env.DATABASE_URL || "";
+if (!DB_URL) {
+  console.error("Thieu DATABASE_URL trong .env");
+  process.exit(1);
+}
+if (!/localhost|127\.0\.0\.1|_test|foodgo_test/.test(DB_URL) && process.env.E2E_CONFIRM !== "1") {
+  console.error("DATABASE_URL khong tro vao localhost hoac *_test.");
+  console.error("Script nay ghi du lieu that va tu cap quyen admin trong DB.");
+  console.error("Neu chac chan, chay lai voi E2E_CONFIRM=1");
+  process.exit(1);
+}
+
+const db = new pg.Client({
+  connectionString: DB_URL,
+  ssl: process.env.PGSSL === "disable" ? false : { rejectUnauthorized: true },
+});
+let dbConnected = false;
+const sql = async (text, params) => {
+  if (!dbConnected) { await db.connect(); dbConnected = true; }
+  return db.query(text, params);
 };
 
 const BASE = process.env.E2E_BASE || "http://localhost:5000";
@@ -78,8 +107,7 @@ const run = async () => {
   check("mat khau ngan -> 400", (await api("POST", "/api/auth/register", { json: { name: "x", email: `e2e-${STAMP}-s@example.local`, password: "123" } })).status === 400);
 
   // Cap quyen admin truc tiep trong DB (dung nhu huong dan trong README)
-  await mongoose.connect(process.env.MONGO_URI);
-  await mongoose.connection.collection("users").updateOne({ email: adminEmail }, { $set: { isAdmin: true } });
+  await sql("UPDATE users SET is_admin = true WHERE email = $1", [adminEmail]);
   const adminLogin = await api("POST", "/api/auth/login", { json: { email: adminEmail, password: "matkhau123" } });
   const custLogin = await api("POST", "/api/auth/login", { json: { email: custEmail, password: "matkhau123" } });
   check("dang nhap admin tra isAdmin = true", adminLogin.status === 200 && adminLogin.body.isAdmin === true, JSON.stringify(adminLogin.body));
@@ -128,7 +156,14 @@ const run = async () => {
   })).status === 400);
   await api("PUT", `/api/food/${foodId}`, { token: admin, form: imageForm({ isAvailable: "true" }) });
   check("isAvailable khong hop le -> 400", (await api("PUT", `/api/food/${foodId}`, { token: admin, form: imageForm({ isAvailable: "maybe" }) })).status === 400);
-  check("doi ten danh muc dang co mon -> 409", (await api("PUT", `/api/category/${created.categories[0]}`, { token: admin, form: imageForm({ name: `${catName} doi` }) })).status === 409);
+  // Ban MongoDB tra 409 o day vi foods.category luu TEN danh muc, doi ten la
+  // lam mon mo coi. Postgres dung khoa ngoai ON UPDATE CASCADE nen doi ten
+  // hoat dong binh thuong va mon van thuoc dung danh muc.
+  const renamed = `${catName} doi`;
+  check("doi ten danh muc dang co mon -> 200", (await api("PUT", `/api/category/${created.categories[0]}`, { token: admin, form: imageForm({ name: renamed }) })).status === 200);
+  const afterRename = await api("GET", `/api/food/category/${encodeURIComponent(renamed)}`);
+  check("mon van thuoc danh muc sau khi doi ten", afterRename.status === 200 && afterRename.body.foods.length > 0, JSON.stringify(afterRename.body).slice(0, 120));
+  check("doi ten lai ten cu -> 200", (await api("PUT", `/api/category/${created.categories[0]}`, { token: admin, form: imageForm({ name: catName }) })).status === 200);
   check("xoa danh muc dang co mon -> 409", (await api("DELETE", `/api/category/${created.categories[0]}`, { token: admin })).status === 409);
 
   section("So dia chi");
@@ -257,7 +292,17 @@ const run = async () => {
   check("thong ke co totalRevenue / byStatus / last7Days",
     stats.status === 200 && typeof stats.body.totalRevenue === "number" && stats.body.byStatus?.length === 5 && Array.isArray(stats.body.last7Days),
     JSON.stringify(stats.body).slice(0, 160));
-  check("don cua khach khac khong xem duoc", (await api("GET", `/api/order/${orderId}`, { token: (await api("POST", "/api/auth/login", { json: { email: custEmail, password: "matkhau123" } })).body.token })).status === 200);
+  // Check nay truoc day dang nhap chinh custEmail (CHU DON) roi assert 200, nen
+  // mang ten "don cua khach khac khong xem duoc" ma khong bao gio kiem duoc IDOR.
+  // Gio dung mot user thu ba that su khong lien quan.
+  const outsiderEmail = `e2e-${STAMP}-outsider@example.local`;
+  const outsiderReg = await api("POST", "/api/auth/register", { json: { name: "E2E Nguoi la", email: outsiderEmail, password: "matkhau123" } });
+  created.users.push(outsiderReg.body.userId);
+  const outsider = outsiderReg.body.token;
+  const idorAttempt = await api("GET", `/api/order/${orderId}`, { token: outsider });
+  check("don cua khach khac KHONG xem duoc (403)", idorAttempt.status === 403, `status=${idorAttempt.status}`);
+  check("chu don van xem duoc don cua minh", (await api("GET", `/api/order/${orderId}`, { token: cust })).status === 200);
+  check("nguoi la KHONG huy duoc don", (await api("PUT", `/api/order/${orderId}/cancel`, { token: outsider, json: { reason: "x" } })).status === 403);
 
   section("Doi mat khau lam token cu het hieu luc");
   const changed = await api("PUT", "/api/auth/change-password", { token: cust, json: { oldPassword: "matkhau123", newPassword: "matkhaumoi123" } });
@@ -279,26 +324,49 @@ const run = async () => {
 const cleanup = async () => {
   section("Don du lieu test");
   try {
-    if (mongoose.connection.readyState !== 1) await mongoose.connect(process.env.MONGO_URI);
-    const db = mongoose.connection;
-    const oid = (id) => new mongoose.Types.ObjectId(String(id));
-    const ids = (arr) => arr.filter(Boolean).map(oid);
-    // Xoa theo tien to e2e-/E2E de don sach ca du lieu con sot tu lan chay truoc
-    const leftover = await db.collection("users").find({ email: /^e2e-/ }).project({ _id: 1 }).toArray();
-    const users = [...new Set([...ids(created.users), ...leftover.map((u) => u._id)].map(String))].map(oid);
+    // Xoa theo tien to e2e-/E2E de don sach ca du lieu con sot tu lan chay truoc.
+    // Thu tu quan trong: payments va orders la ON DELETE RESTRICT nen phai go
+    // truoc users; reviews/notifications/addresses tu CASCADE theo users.
     const r = {};
-    r.reviews = (await db.collection("reviews").deleteMany({ userId: { $in: users } })).deletedCount;
-    r.orders = (await db.collection("orders").deleteMany({ userId: { $in: users } })).deletedCount;
-    r.notifications = (await db.collection("notifications").deleteMany({ userId: { $in: users } })).deletedCount;
-    r.addresses = (await db.collection("addresses").deleteMany({ userId: { $in: users } })).deletedCount;
-    r.foods = (await db.collection("foods").deleteMany({ $or: [{ _id: { $in: ids(created.foods) } }, { name: /^E2E / }] })).deletedCount;
-    r.categories = (await db.collection("categories").deleteMany({ $or: [{ _id: { $in: ids(created.categories) } }, { name: /^E2E / }] })).deletedCount;
-    r.users = (await db.collection("users").deleteMany({ _id: { $in: users } })).deletedCount;
+    const userIds = (await sql(
+      "SELECT id FROM users WHERE email LIKE 'e2e-%'")).rows.map((row) => row.id);
+
+    if (userIds.length) {
+      r.payments = (await sql(
+        `DELETE FROM payments WHERE order_id IN
+           (SELECT id FROM orders WHERE user_id = ANY($1::uuid[]))`, [userIds])).rowCount;
+      r.orders = (await sql(
+        "DELETE FROM orders WHERE user_id = ANY($1::uuid[])", [userIds])).rowCount;
+    }
+
+    // Lay ten anh TRUOC khi xoa ban ghi de con duong xoa file tren dia
+    const images = (await sql(
+      `SELECT image FROM foods WHERE name LIKE 'E2E %'
+       UNION ALL SELECT image FROM categories WHERE name LIKE 'E2E %'
+       UNION ALL SELECT image FROM users WHERE email LIKE 'e2e-%'`)).rows
+      .map((row) => row.image).filter(Boolean);
+
+    r.foods = (await sql("DELETE FROM foods WHERE name LIKE 'E2E %'")).rowCount;
+    r.categories = (await sql("DELETE FROM categories WHERE name LIKE 'E2E %'")).rowCount;
+    r.users = (await sql("DELETE FROM users WHERE email LIKE 'e2e-%'")).rowCount;
+
+    // Ban truoc chi xoa ban ghi DB, nen moi lan chay de lai anh mo coi trong
+    // uploads/ - README lai noi la "xoa sach".
+    let removedImages = 0;
+    for (const image of new Set(images)) {
+      if (path.basename(image) !== image) continue;
+      try {
+        await unlink(path.join(uploadsDir, image));
+        removedImages += 1;
+      } catch { /* file khong con thi bo qua */ }
+    }
+    r.images = removedImages;
+
     console.log("  da xoa:", JSON.stringify(r));
   } catch (error) {
     console.log("  LOI khi don du lieu:", error.message);
   } finally {
-    await mongoose.disconnect().catch(() => {});
+    if (dbConnected) await db.end().catch(() => {});
   }
 };
 

@@ -1,12 +1,3 @@
-import mongoose from "mongoose";
-import logger from "../util/logger.js";
-
-export const connectDB = async () => {
-  try {
-    await mongoose.connect(process.env.MONGO_URI);
-    logger.info("MongoDB connected");
-  } catch (error) {
-    logger.error("MongoDB connection error:", error.message);
-    process.exit(1);
-  }
-};
+// Giu lai file nay de server.js va cac import cu khong phai doi duong dan.
+// Toan bo logic ket noi nam o db/index.js.
+export { connectDB, isDbReady, closeDB, query, withTransaction } from "../db/index.js";

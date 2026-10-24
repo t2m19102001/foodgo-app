@@ -1,13 +1,12 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import mongoose from "mongoose";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import "dotenv/config";
 
-import { connectDB } from "./config/db.js";
+import { connectDB, isDbReady } from "./config/db.js";
 import logger from "./util/logger.js";
 import authRouter from "./routers/authRouter.js";
 import foodRouter from "./routers/foodRouter.js";
@@ -29,12 +28,20 @@ if ((process.env.JWT_SECRET || "").length < 32) {
 const app = express();
 const port = process.env.PORT || 5000;
 
+// Khong co dong nay thi sau nginx/Render, req.ip la IP cua proxy nen
+// express-rate-limit dem chung mot bo dem cho MOI nguoi dung: 10 lan dang nhap
+// sai cua mot ke tan cong se khoa dang nhap cua toan bo user. O local khong bao
+// gio thay loi nay.
+app.set("trust proxy", 1);
+
 app.use(helmet());
 app.use((req, res, next) => {
   const startedAt = process.hrtime.bigint();
   res.on("finish", () => {
     const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
-    logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${elapsedMs.toFixed(1)}ms`);
+    // Query string cua VNPay chua vnp_SecureHash va so tien, khong ghi ra log
+    const url = req.path.startsWith("/api/order/vnpay/") ? req.path : req.originalUrl;
+    logger.info(`${req.method} ${url} ${res.statusCode} ${elapsedMs.toFixed(1)}ms`);
   });
   next();
 });
@@ -77,13 +84,19 @@ app.get("/", (req, res) => {
   res.send("Delivery App API Working");
 });
 
-app.get("/api/health", (req, res) => {
-  const databaseConnected = mongoose.connection.readyState === 1;
+app.get("/api/health", async (req, res) => {
+  const databaseConnected = await isDbReady();
   res.status(databaseConnected ? 200 : 503).json({
     success: databaseConnected,
     database: databaseConnected ? "connected" : "disconnected",
     uptimeSeconds: Math.floor(process.uptime()),
   });
+});
+
+// Khong co handler nay thi goi sai duong dan tra ve trang HTML "Cannot GET
+// /api/xxx", trai voi cam ket "moi phan hoi la JSON {success, message}".
+app.use("/api", (req, res) => {
+  res.status(404).json({ success: false, message: "Không tìm thấy endpoint" });
 });
 
 app.use((err, req, res, next) => {

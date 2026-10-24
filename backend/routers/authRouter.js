@@ -30,6 +30,17 @@ const registerLimiter = rateLimit({
   message: { success: false, message: "Bạn đã đăng ký quá nhiều lần, vui lòng thử lại sau 1 giờ" },
 });
 
+// Khong co gioi han thi oldPassword bi thu vo han, va moi lan thu la mot
+// bcrypt.compare - vua la lo hong be mat khau vua la DoS CPU gia re.
+const changePasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Bạn đã thử sai quá nhiều lần, vui lòng thử lại sau 15 phút" },
+});
+
 authRouter.post("/register", registerLimiter, registerUser);
 authRouter.post("/login", loginLimiter, loginUser);
 authRouter.get("/profile", authMiddleware, getProfile);
@@ -41,6 +52,6 @@ authRouter.put(
   validateUploadedImage,
   updateProfile
 );
-authRouter.put("/change-password", authMiddleware, changePassword);
+authRouter.put("/change-password", changePasswordLimiter, authMiddleware, changePassword);
 
 export default authRouter;

@@ -187,14 +187,21 @@ try {
   );
   check('go "banh mi" khong khop thi tra ve rong', miss.rowCount === 0, `${miss.rowCount} ket qua`);
 
-  const plan = await query(
-    `EXPLAIN (COSTS OFF) SELECT name FROM foods WHERE vn_unaccent(name) LIKE '%pho%'`);
-  const planText = plan.rows.map((r) => r["QUERY PLAN"]).join(" ");
-  check(
-    "query tim kiem dung index foods_search_idx, khong seq scan",
-    planText.includes("foods_search_idx"),
-    planText.includes("Seq Scan") ? "dang Seq Scan" : "ok"
-  );
+  // Tat enable_seqscan khi kiem: voi bang chi vai dong, Seq Scan DUNG la ke
+  // hoach re hon va planner chon no la hop ly. Dieu can kiem o day la index
+  // bieu thuc co KHOP duoc voi query hay khong (neu viet sai vn_unaccent trong
+  // index thi dieu kien se khong bao gio dung duoc index, ke ca khi bang lon).
+  await withTransaction(async (client) => {
+    await client.query("SET LOCAL enable_seqscan = off");
+    const plan = await client.query(
+      `EXPLAIN (COSTS OFF) SELECT name FROM foods WHERE vn_unaccent(name) LIKE '%pho%'`);
+    const planText = plan.rows.map((r) => r["QUERY PLAN"]).join(" ");
+    check(
+      "index foods_search_idx dung duoc cho query tim kiem",
+      planText.includes("foods_search_idx"),
+      planText.replace(/\s+/g, " ").slice(0, 90)
+    );
+  });
 } finally {
   await cleanup();
   const left = await query(
