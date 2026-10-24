@@ -17,6 +17,12 @@ const NEXT_STATUSES = {
   cancelled: [],
 };
 const CANCELLABLE_STATUSES = ["pending", "confirmed"];
+// Don VNPay chua thanh toan coi nhu CHUA TON TAI voi nguoi dung: khong hien
+// trong "Don hang cua toi", danh sach admin, thong ke, hay duoc tra ve boi
+// getOrderByRequestId. Day la cho sua bug "bam Dat hang la da thay don xuat
+// hien roi moi den man thanh toan" - server van giu cho don (xem placeOrder)
+// nhung client khong duoc biet no ton tai cho den khi thanh toan xong.
+const VISIBLE_ORDER_FILTER = "(payment_method <> 'vnpay' OR payment_status = 'paid')";
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_ITEMS = 50;
 
@@ -200,12 +206,20 @@ export const placeOrder = async (req, res) => {
       // Tong tien do server tu cong lai, bo qua "amount" trong request
       await client.query("UPDATE orders SET amount = $2 WHERE id = $1", [orderId, amount]);
       await recordStatusChange(client, orderId, null, "pending", "customer", req.userId);
-      await notify(client, req.userId, "Đặt hàng thành công",
-        `Đơn hàng #${shortCode(orderId)} đã được tạo, tổng tiền ${amount.toLocaleString("vi-VN")}đ. `
-        + "Chúng tôi sẽ xác nhận trong thời gian sớm nhất.");
+
+      // Chi bao "dat hang thanh cong" ngay cho COD - khong qua cong thanh toan
+      // nen dat la xong. Don VNPay van duoc tao o day (de giu cho/chiem khoa
+      // idempotency, tranh "khach da tra tien nhung khong con suat") nhung
+      // CHUA bao cho khach: thong bao va ket qua tra ve chi den khi thanh toan
+      // thanh cong (xem processVnpayResult).
+      if (normalizedPaymentMethod === "cod") {
+        await notify(client, req.userId, "Đặt hàng thành công",
+          `Đơn hàng #${shortCode(orderId)} đã được tạo, tổng tiền ${amount.toLocaleString("vi-VN")}đ. `
+          + "Chúng tôi sẽ xác nhận trong thời gian sớm nhất.");
+      }
 
       const created = await client.query(`${ORDER_SELECT} WHERE o.id = $1`, [orderId]);
-      return { order: created.rows[0] };
+      return { order: created.rows[0], paymentMethod: normalizedPaymentMethod };
     });
 
     if (result.duplicate) {
@@ -213,8 +227,28 @@ export const placeOrder = async (req, res) => {
       if (existing.request_fingerprint !== requestFingerprint) {
         return res.status(409).json({ success: false, message: "Mã yêu cầu đã dùng cho đơn hàng khác" });
       }
+      // Don VNPay gui lai (vi du: nguoi dung thoat trinh duyet giua chung, bam
+      // "Kiem tra / thu lai don") ma CHUA thanh toan - tao payUrl MOI thay vi
+      // tra ve don, vi doi voi client coi nhu don nay chua ton tai.
+      if (existing.payment_method === "vnpay" && existing.payment_status !== "paid") {
+        if (existing.status === "cancelled") {
+          return res.status(400).json({ success: false, message: "Đơn hàng đã bị hủy" });
+        }
+        const payUrl = await regenerateVnpayPayUrl(existing, req.ip);
+        return res.json({ success: true, message: "Vui lòng hoàn tất thanh toán VNPay", payUrl });
+      }
       const order = toOrder(existing);
       return res.json({ success: true, message: "Đơn hàng đã được tạo", orderId: order._id, order });
+    }
+
+    if (result.paymentMethod === "vnpay") {
+      // KHONG tra orderId/order o day - day chinh la cho sua bug "bam Dat hang
+      // la thay da dat hang xong roi moi hien man thanh toan". Server da tao
+      // va giu cho don (tru kho, chiem khoa idempotency) nhung client khong
+      // biet no ton tai; don chi "xuat hien" (GET /my, thong bao) sau khi
+      // VNPay bao thanh toan thanh cong trong processVnpayResult.
+      const payUrl = await regenerateVnpayPayUrl(result.order, req.ip);
+      return res.json({ success: true, message: "Vui lòng hoàn tất thanh toán VNPay", payUrl });
     }
 
     const order = toOrder(result.order);
@@ -225,53 +259,18 @@ export const placeOrder = async (req, res) => {
   }
 };
 
-export const createVnpayPayment = async (req, res) => {
-  try {
-    if (!isUuid(req.params.id)) {
-      return res.status(400).json({ success: false, message: "Mã đơn hàng không hợp lệ" });
-    }
-    const { rows } = await query(
-      "SELECT id, user_id, amount, status, payment_method, payment_status FROM orders WHERE id = $1",
-      [req.params.id]
-    );
-    const order = rows[0];
-
-    if (!order) {
-      return res.status(404).json({ success: false, message: "Không tìm thấy đơn hàng" });
-    }
-    if (order.user_id !== req.userId) {
-      return res.status(403).json({ success: false, message: "Không có quyền thanh toán đơn hàng này" });
-    }
-    if (order.payment_method !== "vnpay") {
-      return res.status(400).json({ success: false, message: "Đơn hàng không sử dụng phương thức VNPay" });
-    }
-    if (order.payment_status === "paid") {
-      return res.status(400).json({ success: false, message: "Đơn hàng đã được thanh toán" });
-    }
-    // Ban Mongo KHONG kiem tra status o day: huy don roi goi lai van nhan duoc
-    // payUrl hop le, thanh toan xong la tien vao ma don van cancelled.
-    if (!CANCELLABLE_STATUSES.includes(order.status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Đơn hàng không ở trạng thái có thể thanh toán",
-      });
-    }
-
-    const txnRef = `${order.id}-${Date.now()}`;
-    await query("UPDATE orders SET vnp_txn_ref = $2 WHERE id = $1", [order.id, txnRef]);
-
-    const payUrl = buildPaymentUrl({
-      txnRef,
-      amount: order.amount,
-      orderInfo: `Thanh toan don hang ${shortCode(order.id)}`,
-      ipAddr: req.ip,
-    });
-
-    res.json({ success: true, payUrl });
-  } catch (error) {
-    logger.error("Create VNPay payment error:", error);
-    res.status(500).json({ success: false, message: "Lỗi khi tạo thanh toán VNPay" });
-  }
+// Tao hoac lam moi payUrl VNPay cho mot don: ghi vnp_txn_ref MOI (txnRef cu mat
+// hieu luc vi processVnpayResult chi cong nhan txnRef moi nhat) roi build URL.
+// Dung ca khi tao don lan dau va khi nguoi dung thoat giua chung roi quay lai.
+const regenerateVnpayPayUrl = async (order, ip) => {
+  const txnRef = `${order.id}-${Date.now()}`;
+  await query("UPDATE orders SET vnp_txn_ref = $2 WHERE id = $1", [order.id, txnRef]);
+  return buildPaymentUrl({
+    txnRef,
+    amount: order.amount,
+    orderInfo: `Thanh toan don hang ${shortCode(order.id)}`,
+    ipAddr: ip,
+  });
 };
 
 // Dung chung cho ca Return URL (browser redirect) va IPN (goi server-to-server
@@ -370,11 +369,15 @@ const processVnpayResult = async (vnpQuery, source) => {
         "Thanh toan VNPay thanh cong");
     }
 
+    // Voi VNPay day la thong bao DAU TIEN ma khach nhan duoc ve don nay - luc
+    // dat hang server khong bao gi ca (xem placeOrder). Noi dung vi the phai
+    // vua bao "da tao" vua bao "da thanh toan", vi voi khach hai viec xay ra
+    // cung mot luc.
     await notify(client, order.user_id,
-      success ? "Thanh toán VNPay thành công" : "Thanh toán VNPay thất bại",
+      success ? "Đặt hàng & thanh toán thành công" : "Thanh toán VNPay thất bại",
       success
-        ? `Đơn hàng #${shortCode(order.id)} đã được thanh toán qua VNPay.`
-        : `Thanh toán VNPay cho đơn hàng #${shortCode(order.id)} không thành công. Vui lòng thử lại.`);
+        ? `Đơn hàng #${shortCode(order.id)} đã được tạo, tổng tiền ${Number(order.amount).toLocaleString("vi-VN")}đ, đã thanh toán qua VNPay.`
+        : `Thanh toán VNPay cho đơn hàng #${shortCode(order.id)} không thành công. Vui lòng thử lại trong ứng dụng.`);
 
     return { ok: true, code: "00", order, success };
   });
@@ -417,7 +420,7 @@ export const getMyOrders = async (req, res) => {
     const { page, limit, skip } = pagination;
 
     const params = [req.userId];
-    let where = "WHERE o.user_id = $1";
+    let where = `WHERE o.user_id = $1 AND ${VISIBLE_ORDER_FILTER}`;
     if (req.query.status) {
       if (!VALID_STATUSES.includes(req.query.status)) {
         return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
@@ -474,10 +477,13 @@ export const getOrderByRequestId = async (req, res) => {
       return res.status(400).json({ success: false, message: "Mã yêu cầu không hợp lệ" });
     }
     const { rows } = await query(
-      `${ORDER_SELECT} WHERE o.user_id = $1 AND o.client_request_id = $2`,
+      `${ORDER_SELECT} WHERE o.user_id = $1 AND o.client_request_id = $2 AND ${VISIBLE_ORDER_FILTER}`,
       [req.userId, req.params.clientRequestId]
     );
     if (rows.length === 0) {
+      // 404 ke ca khi don ton tai nhung la VNPay chua thanh toan: app doc 404
+      // nay y het "chua dat duoc" nen tu dong goi lai POST /api/order - dung
+      // luong resume co san, khong can sua gi them o Android.
       return res.status(404).json({ success: false, message: "Chưa tìm thấy đơn hàng" });
     }
     const order = toOrder(rows[0]);
@@ -564,13 +570,13 @@ export const listAllOrders = async (req, res) => {
     const { page, limit, skip } = pagination;
 
     const params = [];
-    let where = "";
+    let where = `WHERE ${VISIBLE_ORDER_FILTER}`;
     if (req.query.status) {
       if (!VALID_STATUSES.includes(req.query.status)) {
         return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
       }
       params.push(req.query.status);
-      where = `WHERE o.status = $${params.length}`;
+      where += ` AND o.status = $${params.length}`;
     }
 
     // Thong tin khach nam o field "customer": app Android doc "userId" la chuoi.
@@ -612,7 +618,7 @@ export const getOrderStats = async (req, res) => {
     const [statusRows, dayRows] = await Promise.all([
       query(
         `SELECT status, count(*)::int AS count, COALESCE(sum(amount), 0)::bigint AS total
-         FROM orders GROUP BY status`
+         FROM orders WHERE ${VISIBLE_ORDER_FILTER} GROUP BY status`
       ),
       query(
         `SELECT to_char(d.day, 'YYYY-MM-DD') AS date,
@@ -625,6 +631,7 @@ export const getOrderStats = async (req, res) => {
          LEFT JOIN orders o
                 ON o.status = 'delivered'
                AND (o.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = d.day
+               AND (o.payment_method <> 'vnpay' OR o.payment_status = 'paid')
          GROUP BY d.day ORDER BY d.day`
       ),
     ]);

@@ -82,7 +82,12 @@ public class CartActivity extends AppCompatActivity {
             adapter.setItems(items);
             boolean empty = items == null || items.isEmpty();
             textEmpty.setVisibility(empty ? View.VISIBLE : View.GONE);
-            btnCheckout.setEnabled(!empty);
+            // Gio trong nhung dang co don VNPay cho thanh toan (gio da bi xoa luc
+            // mo payUrl - xem CheckoutViewModel): van phai cho vao Checkout, khong
+            // thi khong con cach nao bam duoc "Kiem tra / thu lai don" nua.
+            boolean hasPending = empty && CheckoutViewModel.hasPendingOrder(this);
+            btnCheckout.setEnabled(!empty || hasPending);
+            btnCheckout.setText(hasPending ? "Kiểm tra / thử lại đơn" : "Tiến hành đặt hàng");
         });
 
         viewModel.getTotalAmount().observe(this, total ->

@@ -26,7 +26,6 @@ import com.foodgo_app.model.response.ReviewListResponse;
 import com.foodgo_app.model.response.ReviewResponse;
 import com.foodgo_app.model.response.SimpleResponse;
 import com.foodgo_app.model.response.UpdateStatusRequest;
-import com.foodgo_app.model.response.VnpayCreateResponse;
 
 import okhttp3.MultipartBody;
 import okhttp3.RequestBody;
@@ -141,9 +140,6 @@ public interface ApiService {
 
     @GET("api/order/{id}")
     Call<OrderDetailResponse> getOrderById(@Path("id") String id);
-
-    @POST("api/order/{id}/vnpay/create-payment")
-    Call<VnpayCreateResponse> createVnpayPayment(@Path("id") String id);
 
     @PUT("api/order/{id}/cancel")
     Call<OrderDetailResponse> cancelOrder(@Path("id") String id, @Body CancelOrderRequest body);

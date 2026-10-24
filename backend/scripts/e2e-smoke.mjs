@@ -188,6 +188,7 @@ const run = async () => {
   };
   const order1 = await api("POST", "/api/order", { token: cust, json: orderPayload });
   check("dat hang -> 201", order1.status === 201, JSON.stringify(order1.body).slice(0, 200));
+  check("don COD khong qua cong thanh toan nen khong co payUrl", order1.body.payUrl === undefined);
   const orderId = order1.body.orderId || order1.body.order?._id;
   created.orders.push(orderId);
   check("server tu tinh tien (2 x 45000), bo qua price client gui", order1.body.order?.amount === 90000, String(order1.body.order?.amount));
@@ -214,47 +215,64 @@ const run = async () => {
   check("unreadCount ve 0", (await api("GET", "/api/notification", { token: cust })).body.unreadCount === 0);
 
   section("VNPay");
-  check("don COD khong tao duoc thanh toan VNPay",
-    (await api("POST", `/api/order/${orderId}/vnpay/create-payment`, { token: cust })).status === 400);
-
-  const vnpOrder = await api("POST", "/api/order", {
-    token: cust,
-    json: { ...orderPayload, clientRequestId: crypto.randomUUID(), paymentMethod: "vnpay" },
-  });
-  const vnpOrderId = vnpOrder.body.orderId || vnpOrder.body.order?._id;
-  created.orders.push(vnpOrderId);
-  check("dat don voi paymentMethod vnpay -> 201", vnpOrder.status === 201, JSON.stringify(vnpOrder.body).slice(0, 150));
-
-  const pay = await api("POST", `/api/order/${vnpOrderId}/vnpay/create-payment`, { token: cust });
-  const payUrl = pay.body.payUrl || "";
-  check("tao payUrl co chu ky", pay.status === 200 && payUrl.includes("vnp_SecureHash="), JSON.stringify(pay.body).slice(0, 150));
+  // Dat hang bang VNPay KHONG tra orderId/order - chi tra payUrl. Day chinh la
+  // cho sua bug "bam Dat hang la thay don xuat hien (GET /my) roi moi den man
+  // thanh toan": server co giu cho don o phia sau (xem placeOrder) nhung client
+  // khong duoc biet no ton tai cho den khi VNPay bao thanh toan thanh cong.
+  const vnpRequestId = crypto.randomUUID();
+  const vnpPayload = { ...orderPayload, clientRequestId: vnpRequestId, paymentMethod: "vnpay" };
+  const vnpOrder = await api("POST", "/api/order", { token: cust, json: vnpPayload });
+  check("dat don VNPay -> 200, khong phai 201 (khong co gi duoc 'tao' voi client)",
+    vnpOrder.status === 200, JSON.stringify(vnpOrder.body).slice(0, 150));
+  check("response KHONG co orderId", vnpOrder.body.orderId === undefined, JSON.stringify(vnpOrder.body).slice(0, 150));
+  check("response KHONG co order", vnpOrder.body.order === undefined);
+  const payUrl = vnpOrder.body.payUrl || "";
+  check("tao payUrl co chu ky", payUrl.includes("vnp_SecureHash="), JSON.stringify(vnpOrder.body).slice(0, 150));
   check("payUrl gui so tien x100 (90.000 -> 9000000)", payUrl.includes("vnp_Amount=9000000"), payUrl.split("vnp_Amount=")[1]?.slice(0, 12));
   const txnRef = new URL(payUrl).searchParams.get("vnp_TxnRef");
+  const vnpOrderId = txnRef.slice(0, txnRef.lastIndexOf("-"));
   check("vnp_TxnRef chua orderId", String(txnRef).startsWith(String(vnpOrderId)), String(txnRef));
-  check("nguoi khac tao thanh toan cho don nay -> 403/404",
-    [403, 404].includes((await api("POST", `/api/order/${vnpOrderId}/vnpay/create-payment`, { token: admin })).status));
+
+  // Don co that tren server (admin xem truc tiep duoc qua GET /:id, dung cho
+  // doi soat/ho tro) nhung CHUA xuat hien trong danh sach cua ai ca
+  check("don VNPay chua thanh toan KHONG hien trong GET /my cua khach",
+    !(await api("GET", "/api/order/my", { token: cust })).body.orders.some((o) => o._id === vnpOrderId));
+  check("don VNPay chua thanh toan KHONG hien trong GET /list cua admin",
+    !(await api("GET", "/api/order/list", { token: admin })).body.orders.some((o) => o._id === vnpOrderId));
+  check("getOrderByRequestId tra 404 cho don chua thanh toan (giong het chua dat duoc)",
+    (await api("GET", `/api/order/request/${vnpRequestId}`, { token: cust })).status === 404);
 
   // Chu ky gia: khong duoc cap nhat trang thai thanh toan
   const forged = await api("GET", `/api/order/vnpay/ipn?vnp_TxnRef=${txnRef}&vnp_ResponseCode=00&vnp_SecureHash=deadbeef`);
   check("IPN chu ky gia -> RspCode 97", forged.body.RspCode === "97", JSON.stringify(forged.body));
   const returnForged = await fetch(`${BASE}/api/order/vnpay/return?vnp_TxnRef=${txnRef}&vnp_ResponseCode=00&vnp_SecureHash=deadbeef`);
   check("return chu ky gia -> trang bao khong hop le", (await returnForged.text()).includes("khong hop le"));
-  check("don van chua duoc danh dau da thanh toan",
-    (await api("GET", `/api/order/${vnpOrderId}`, { token: cust })).body.order?.paymentStatus !== "paid");
+  check("don van chua thanh toan sau chu ky gia",
+    !(await api("GET", "/api/order/my", { token: cust })).body.orders.some((o) => o._id === vnpOrderId));
 
-  // Chu ky that: don chuyen sang paid + confirmed va sinh thong bao
+  // Chu ky that: don chuyen sang paid + confirmed, sinh thong bao, VA xuat hien
+  // trong moi danh sach tu bay gio
   const ipnParams = { vnp_TxnRef: txnRef, vnp_ResponseCode: "00", vnp_Amount: "9000000", vnp_TmnCode: process.env.VNPAY_TMN_CODE };
   const ipnQuery = { ...ipnParams, vnp_SecureHash: signVnpay(ipnParams) };
   check("chu ky tu ky duoc backend cong nhan (doi chieu verifySignature)", verifySignature(ipnQuery) === true);
   const ipnOk = await api("GET", `/api/order/vnpay/ipn?${new URLSearchParams(ipnQuery)}`);
   check("IPN hop le -> RspCode 00", ipnOk.body.RspCode === "00", JSON.stringify(ipnOk.body));
-  const paidOrder = await api("GET", `/api/order/${vnpOrderId}`, { token: cust });
-  check("don chuyen sang paid", paidOrder.body.order?.paymentStatus === "paid", String(paidOrder.body.order?.paymentStatus));
-  check("don tu pending -> confirmed sau khi thanh toan", paidOrder.body.order?.status === "confirmed", String(paidOrder.body.order?.status));
+  created.orders.push(vnpOrderId);
+
+  const afterPay = await api("GET", "/api/order/my", { token: cust });
+  const paidInList = afterPay.body.orders.find((o) => o._id === vnpOrderId);
+  check("don VNPay xuat hien trong GET /my NGAY SAU KHI thanh toan xong", !!paidInList, JSON.stringify(afterPay.body.orders?.[0]));
+  check("don chuyen sang paid", paidInList?.paymentStatus === "paid", String(paidInList?.paymentStatus));
+  check("don tu pending -> confirmed sau khi thanh toan", paidInList?.status === "confirmed", String(paidInList?.status));
   check("co thong bao ket qua thanh toan", (await api("GET", "/api/notification", { token: cust })).body.notifications
     .some((n) => /thanh to/i.test(`${n.title} ${n.message}`)));
   const ipnReplay = await api("GET", `/api/order/vnpay/ipn?${new URLSearchParams(ipnQuery)}`);
   check("IPN goi lai lan 2 (idempotent) -> RspCode 00", ipnReplay.body.RspCode === "00", JSON.stringify(ipnReplay.body));
+
+  const resubmitPaid = await api("POST", "/api/order", { token: cust, json: vnpPayload });
+  check("gui lai cung clientRequestId SAU KHI thanh toan -> tra ve don that, khong phai payUrl moi",
+    resubmitPaid.status === 200 && resubmitPaid.body.orderId === vnpOrderId && resubmitPaid.body.payUrl === undefined,
+    JSON.stringify(resubmitPaid.body).slice(0, 150));
 
   section("Danh gia (rang buoc nghiep vu)");
   check("danh gia mon chua nhan -> 403", (await api("POST", "/api/review", { token: cust, json: { foodId, rating: 5, comment: "chua mua" } })).status === 403);

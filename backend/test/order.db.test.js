@@ -202,20 +202,9 @@ test("huy don hoan lai ton kho", { skip }, async () => {
     "huy don phai tra lai suat da giu");
 });
 
-test("khong tao duoc thanh toan VNPay cho don DA HUY", { skip }, async () => {
-  const userId = await makeUser();
-  const orderId = await makeOrder(userId, {
-    status: "cancelled", paymentMethod: "vnpay", paymentStatus: "unpaid",
-  });
-
-  const response = makeResponse();
-  await order.createVnpayPayment({ userId, params: { id: orderId }, ip: "127.0.0.1" }, response);
-
-  // Ban Mongo chi kiem paymentMethod va paymentStatus, KHONG kiem status, nen
-  // huy don roi van xin duoc payUrl hop le va tien vao don da huy.
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.body.payUrl, undefined);
-});
+// Luu y: viec "tao thanh toan VNPay cho don da huy" khong con la mot endpoint
+// rieng (xem test/vnpayCallback.db.test.js "don VNPay da bi huy thi khong cap
+// lai payUrl" - gio di qua chinh placeOrder() khi gui lai cung clientRequestId).
 
 test("khong huy duoc don DA THANH TOAN, phai hoan tien truoc", { skip }, async () => {
   const userId = await makeUser();

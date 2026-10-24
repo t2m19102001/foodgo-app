@@ -17,7 +17,6 @@ import com.foodgo_app.model.SavedAddress;
 import com.foodgo_app.model.response.AddressListResponse;
 import com.foodgo_app.model.response.OrderDetailResponse;
 import com.foodgo_app.model.response.PlaceOrderRequest;
-import com.foodgo_app.model.response.VnpayCreateResponse;
 import com.foodgo_app.repository.AddressRepository;
 import com.foodgo_app.repository.CartRepository;
 import com.foodgo_app.repository.OrderRepository;
@@ -46,6 +45,10 @@ public class CheckoutViewModel extends AndroidViewModel {
     private final MutableLiveData<Double> totalAmount = new MutableLiveData<>();
     private final MutableLiveData<Boolean> loading = new MutableLiveData<>(false);
     private final MutableLiveData<String> error = new MutableLiveData<>();
+    // placedOrderId chi duoc set khi don THAT SU da duoc dat: COD ngay luc tao,
+    // hoac VNPay sau khi da thanh toan thanh cong (qua checkPendingOrder, xem
+    // ghi chu o submitOrder). Voi VNPay chua tra tien, server khong tra ve
+    // orderId/order nen khong co gi de dieu huong toi ca - chi mo payUrl.
     private final MutableLiveData<String> placedOrderId = new MutableLiveData<>();
     private final MutableLiveData<Boolean> hasPendingOrder = new MutableLiveData<>(false);
     private final MutableLiveData<String> vnpayPayUrl = new MutableLiveData<>();
@@ -58,12 +61,25 @@ public class CheckoutViewModel extends AndroidViewModel {
         orderRepository = new OrderRepository(application);
         addressRepository = new AddressRepository(application);
         pendingPrefs = application.getSharedPreferences("delivery_app_checkout", Context.MODE_PRIVATE);
-        String userId = new SessionManager(application).getUserId();
-        pendingKey = "pending_" + (userId != null ? userId : "guest");
+        pendingKey = pendingKeyFor(application);
         hasPendingOrder.setValue(pendingPrefs.contains(pendingKey));
         cartItems.setValue(cartRepository.getCartItems());
         totalAmount.setValue(cartRepository.getTotalAmount());
         loadAddresses();
+    }
+
+    private static String pendingKeyFor(Context context) {
+        String userId = new SessionManager(context).getUserId();
+        return "pending_" + (userId != null ? userId : "guest");
+    }
+
+    // Dung o CartActivity: don VNPay da tao payUrl thi gio da xoa het, nen nut
+    // "Tien hanh dat hang" (vo hieu hoa khi gio trong) se la ngo cut - khong con
+    // cach nao quay lai man Checkout de bam "Kiem tra / thu lai don". Ham nay
+    // cho CartActivity biet khi nao van phai cho vao Checkout du gio dang trong.
+    public static boolean hasPendingOrder(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences("delivery_app_checkout", Context.MODE_PRIVATE);
+        return prefs.contains(pendingKeyFor(context));
     }
 
     public LiveData<List<CartItem>> getCartItems() { return cartItems; }
@@ -183,7 +199,9 @@ public class CheckoutViewModel extends AndroidViewModel {
             public void onResponse(@NonNull Call<OrderDetailResponse> call, @NonNull Response<OrderDetailResponse> response) {
                 if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
                     completeOrder(response.body(), request);
-                } else if (response.code() == 404) {
+                    return;
+                }
+                if (response.code() == 404) {
                     submitOrder(request);
                 } else {
                     loading.setValue(false);
@@ -207,7 +225,17 @@ public class CheckoutViewModel extends AndroidViewModel {
                 loading.setValue(false);
                 OrderDetailResponse body = response.body();
                 if (response.isSuccessful() && body != null && body.isSuccess()) {
-                    completeOrder(body, request);
+                    if (body.getPayUrl() != null && !body.getPayUrl().isEmpty()) {
+                        // VNPay CHUA thanh toan: server co giu cho don o phia sau nhung
+                        // KHONG tra orderId/order o day, nen khong co gi de goi la "da dat
+                        // hang" ca - chi mo thang man hinh thanh toan. KHONG clearPending:
+                        // client_request_id phai con de nut "Kiem tra / thu lai don" dung
+                        // duoc sau khi nguoi dung quay lai tu trinh duyet VNPay.
+                        cartRepository.removeOrderedItems(request.getItems());
+                        vnpayPayUrl.setValue(body.getPayUrl());
+                    } else {
+                        completeOrder(body, request);
+                    }
                 } else {
                     if (response.code() >= 400 && response.code() < 500 && response.code() != 408
                             && response.code() != 429) clearPending();
@@ -223,6 +251,11 @@ public class CheckoutViewModel extends AndroidViewModel {
         });
     }
 
+    // Chi goi khi server THAT SU tra ve mot don: COD (luon luon), hoac VNPay
+    // sau khi da thanh toan xong (qua checkPendingOrder - xem placeOrder()).
+    // Goi removeOrderedItems lai o day van an toan voi don VNPay da thanh toan:
+    // cac item lien quan da bi xoa khoi gio tu luc mo payUrl (xem submitOrder),
+    // nen lan nay khong con gi trung de xoa them.
     private void completeOrder(OrderDetailResponse body, PlaceOrderRequest request) {
         String orderId = body.getOrderId();
         if (orderId == null && body.getOrder() != null) orderId = body.getOrder().getId();
@@ -233,40 +266,8 @@ public class CheckoutViewModel extends AndroidViewModel {
         }
         clearPending();
         cartRepository.removeOrderedItems(request.getItems());
-        if ("vnpay".equals(request.getPaymentMethod())) {
-            createVnpayPayment(orderId);
-        } else {
-            loading.setValue(false);
-            placedOrderId.setValue(orderId);
-        }
-    }
-
-    // Don da tao xong (COD hoac VNPay), chi con thieu buoc lay link thanh toan VNPay.
-    // Du thanh cong hay khong van chuyen sang man theo doi don vi don da ton tai tren server.
-    private void createVnpayPayment(String orderId) {
-        String finalOrderId = orderId;
-        orderRepository.createVnpayPayment(orderId).enqueue(new Callback<VnpayCreateResponse>() {
-            @Override
-            public void onResponse(@NonNull Call<VnpayCreateResponse> call, @NonNull Response<VnpayCreateResponse> response) {
-                loading.setValue(false);
-                VnpayCreateResponse body = response.body();
-                // Chuyen sang man theo doi don TRUOC (don da clear task) de khi mo trinh duyet
-                // VNPay ngay sau, trinh duyet khong bi "cuon" theo flag CLEAR_TASK cua buoc nay
-                placedOrderId.setValue(finalOrderId);
-                if (response.isSuccessful() && body != null && body.isSuccess() && body.getPayUrl() != null) {
-                    vnpayPayUrl.setValue(body.getPayUrl());
-                } else {
-                    error.setValue(body != null ? body.getMessage() : ApiErrorUtils.getMessage(response, "Không thể tạo thanh toán VNPay"));
-                }
-            }
-
-            @Override
-            public void onFailure(@NonNull Call<VnpayCreateResponse> call, @NonNull Throwable t) {
-                loading.setValue(false);
-                placedOrderId.setValue(finalOrderId);
-                error.setValue("Không thể tạo thanh toán VNPay. Vui lòng kiểm tra mạng rồi thử lại sau.");
-            }
-        });
+        loading.setValue(false);
+        placedOrderId.setValue(orderId);
     }
 
     private void clearPending() {

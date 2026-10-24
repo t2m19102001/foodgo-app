@@ -14,7 +14,6 @@ import com.foodgo_app.model.response.OrderListResponse;
 import com.foodgo_app.model.response.OrderStatsResponse;
 import com.foodgo_app.model.response.PlaceOrderRequest;
 import com.foodgo_app.model.response.UpdateStatusRequest;
-import com.foodgo_app.model.response.VnpayCreateResponse;
 
 import java.util.List;
 
@@ -46,10 +45,6 @@ public class OrderRepository {
 
     public Call<OrderDetailResponse> cancelOrder(String id, String reason) {
         return apiService.cancelOrder(id, new CancelOrderRequest(reason));
-    }
-
-    public Call<VnpayCreateResponse> createVnpayPayment(String orderId) {
-        return apiService.createVnpayPayment(orderId);
     }
 
     // ===== Danh cho admin =====

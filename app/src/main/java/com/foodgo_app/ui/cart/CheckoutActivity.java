@@ -145,13 +145,24 @@ public class CheckoutActivity extends AppCompatActivity {
             }
         });
 
+        // VNPay: server CHUA tao don nao ca o thoi diem nay (xem CheckoutViewModel),
+        // nen o day KHONG dieu huong di dau, KHONG bao "thanh cong" - chi mo trinh
+        // duyet de thanh toan. Nguoi dung van o lai man Checkout; nut "Dat hang" da
+        // tu doi thanh "Kiem tra / thu lai don" (xem getHasPendingOrder o tren) de
+        // ho bam lai sau khi thanh toan xong - luc do don moi thuc su duoc tao.
         viewModel.getVnpayPayUrl().observe(this, payUrl -> {
             if (payUrl != null && !payUrl.isEmpty()) {
+                Toast.makeText(this,
+                        "Đang chuyển đến VNPay để thanh toán. Sau khi thanh toán xong, quay lại và bấm \"Kiểm tra / thử lại đơn\".",
+                        Toast.LENGTH_LONG).show();
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(payUrl)));
                 viewModel.clearVnpayPayUrl();
             }
         });
 
+        // placedOrderId chi duoc set khi don THAT SU ton tai: COD ngay luc dat,
+        // hoac VNPay sau khi da thanh toan thanh cong. Ca hai truong hop deu dung
+        // noi "Dat hang thanh cong" vi luc nay no moi la su that.
         viewModel.getPlacedOrderId().observe(this, orderId -> {
             if (orderId != null && !orderId.isEmpty()) {
                 Toast.makeText(this, "Đặt hàng thành công", Toast.LENGTH_SHORT).show();
