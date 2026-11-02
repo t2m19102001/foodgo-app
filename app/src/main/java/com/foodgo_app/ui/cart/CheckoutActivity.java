@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.foodgo_app.R;
 import com.foodgo_app.adapter.CartSummaryAdapter;
 import com.foodgo_app.model.SavedAddress;
@@ -49,8 +50,12 @@ public class CheckoutActivity extends AppCompatActivity {
     private TextView textAddressName;
     private TextView textAddressDetail;
     private TextView textAddressNote;
+    private TextView textPendingStatus;
+    private View layoutPendingActions;
+    private MaterialButton btnResumePayment;
     private boolean isLoading;
     private boolean hasSelectedAddress;
+    private boolean hasPending;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -99,6 +104,22 @@ public class CheckoutActivity extends AppCompatActivity {
                 radioPaymentVnpay.isChecked() ? "vnpay" : "cod"
         ));
 
+        textPendingStatus = findViewById(R.id.text_pending_status);
+        layoutPendingActions = findViewById(R.id.layout_pending_actions);
+        btnResumePayment = findViewById(R.id.btn_resume_payment);
+        btnResumePayment.setOnClickListener(v -> {
+            String url = viewModel.getResumePayUrl().getValue();
+            if (url != null && !url.isEmpty()) openPayment(url);
+        });
+        findViewById(R.id.btn_cancel_pending).setOnClickListener(v ->
+                new MaterialAlertDialogBuilder(this)
+                        .setTitle("Hủy thanh toán VNPay?")
+                        .setMessage("Đơn đang chờ thanh toán sẽ bị hủy, giỏ hàng vẫn được giữ nguyên để bạn chọn phương thức khác. "
+                                + "Nếu bạn đã thanh toán, hãy bấm \"Kiểm tra / thanh toán lại\" trước.")
+                        .setNegativeButton("Không", null)
+                        .setPositiveButton("Hủy thanh toán", (dialog, which) -> viewModel.abandonPendingOrder())
+                        .show());
+
         observeViewModel();
     }
 
@@ -114,7 +135,20 @@ public class CheckoutActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Quay lai tu trinh duyet VNPay (hoac mo lai man hinh): cap nhat trang
+        // thai don dang cho, khong tu gui lai don
+        viewModel.refreshPendingStatus();
+    }
+
+    private void openPayment(String payUrl) {
+        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(payUrl)));
+    }
+
     private void selectPaymentMethod(boolean isCod) {
+        if (hasPending) return;
         radioPaymentCod.setChecked(isCod);
         radioPaymentVnpay.setChecked(!isCod);
     }
@@ -131,8 +165,33 @@ public class CheckoutActivity extends AppCompatActivity {
             updatePlaceOrderButtonState();
         });
 
-        viewModel.getHasPendingOrder().observe(this, pending -> btnPlaceOrder.setText(
-                Boolean.TRUE.equals(pending) ? "Kiểm tra / thử lại đơn" : "Đặt hàng"));
+        viewModel.getHasPendingOrder().observe(this, pending -> {
+            hasPending = Boolean.TRUE.equals(pending);
+            btnPlaceOrder.setText(hasPending ? "Kiểm tra / thanh toán lại" : "Đặt hàng");
+            layoutPendingActions.setVisibility(hasPending ? View.VISIBLE : View.GONE);
+            // Dang cho thanh toan thi khong doi phuong thuc tai cho: phai huy truoc
+            float alpha = hasPending ? 0.5f : 1f;
+            cardPaymentCod.setAlpha(alpha);
+            cardPaymentVnpay.setAlpha(alpha);
+            updatePlaceOrderButtonState();
+        });
+
+        viewModel.getPendingStatus().observe(this, status -> {
+            boolean show = status != null && !status.isEmpty();
+            textPendingStatus.setText(status);
+            textPendingStatus.setVisibility(show ? View.VISIBLE : View.GONE);
+        });
+
+        viewModel.getResumePayUrl().observe(this, url ->
+                btnResumePayment.setVisibility(url != null && !url.isEmpty() ? View.VISIBLE : View.GONE));
+
+        viewModel.getInfo().observe(this, message -> {
+            if (message != null && !message.isEmpty()) {
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                textError.setVisibility(View.GONE);
+                viewModel.clearInfo();
+            }
+        });
 
         viewModel.getSelectedAddress().observe(this, this::bindAddress);
 
@@ -145,17 +204,13 @@ public class CheckoutActivity extends AppCompatActivity {
             }
         });
 
-        // VNPay: server CHUA tao don nao ca o thoi diem nay (xem CheckoutViewModel),
-        // nen o day KHONG dieu huong di dau, KHONG bao "thanh cong" - chi mo trinh
-        // duyet de thanh toan. Nguoi dung van o lai man Checkout; nut "Dat hang" da
-        // tu doi thanh "Kiem tra / thu lai don" (xem getHasPendingOrder o tren) de
-        // ho bam lai sau khi thanh toan xong - luc do don moi thuc su duoc tao.
+        // VNPay: don chua "ton tai" voi khach cho den khi thanh toan xong, nen o
+        // day KHONG dieu huong, KHONG bao thanh cong - chi mo trinh duyet. Khi khach
+        // quay lai, onResume tu kiem tra trang thai (xem refreshPendingStatus).
         viewModel.getVnpayPayUrl().observe(this, payUrl -> {
             if (payUrl != null && !payUrl.isEmpty()) {
-                Toast.makeText(this,
-                        "Đang chuyển đến VNPay để thanh toán. Sau khi thanh toán xong, quay lại và bấm \"Kiểm tra / thử lại đơn\".",
-                        Toast.LENGTH_LONG).show();
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(payUrl)));
+                Toast.makeText(this, "Đang chuyển đến VNPay để thanh toán…", Toast.LENGTH_SHORT).show();
+                openPayment(payUrl);
                 viewModel.clearVnpayPayUrl();
             }
         });
@@ -191,6 +246,9 @@ public class CheckoutActivity extends AppCompatActivity {
     }
 
     private void updatePlaceOrderButtonState() {
-        btnPlaceOrder.setEnabled(!isLoading && hasSelectedAddress);
+        // Don dang cho thi dung yeu cau da luu, khong can dia chi dang chon
+        btnPlaceOrder.setEnabled(!isLoading && (hasSelectedAddress || hasPending));
+        findViewById(R.id.btn_cancel_pending).setEnabled(!isLoading);
+        btnResumePayment.setEnabled(!isLoading);
     }
 }

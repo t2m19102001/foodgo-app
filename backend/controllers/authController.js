@@ -1,7 +1,9 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import validator from "validator";
-import { query } from "../db/index.js";
+import { randomUUID } from "node:crypto";
+import { query, withTransaction } from "../db/index.js";
+import { HttpError, sendHttpError } from "../util/httpError.js";
 import { mapUser } from "../db/mappers.js";
 import { deleteImageSafe } from "../util/uploadFile.js";
 import logger from "../util/logger.js";
@@ -204,5 +206,110 @@ export const changePassword = async (req, res) => {
   } catch (error) {
     logger.error("Change password error:", error);
     res.status(500).json({ success: false, message: "Lỗi hệ thống khi đổi mật khẩu" });
+  }
+};
+
+// Xoa tai khoan (yeu cau cua Google Play / App Store voi app cho tao tai khoan).
+//
+// Don hang phai giu lai de doi soat va ke toan (orders.user_id la ON DELETE
+// RESTRICT), nen "xoa" o day la AN DANH HOA trong mot transaction:
+//   - xoa dia chi, thong bao, danh gia; xoa thong tin giao hang trong don cu
+//   - huy cac don VNPay dang cho thanh toan va hoan kho
+//   - dong users con lai khong con du lieu ca nhan, email doi thanh dia chi
+//     gia nen email cu dang ky lai duoc, token cu het hieu luc ngay
+// Tu choi khi con don dang giao hoac con tien cho hoan: khach can nhan hang /
+// nhan tien truoc, sau khi xoa thi khong con kenh nao lien he duoc ho.
+export const deleteAccount = async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    if (typeof password !== "string" || !password) {
+      return res.status(400).json({ success: false, message: "Vui lòng nhập mật khẩu để xác nhận" });
+    }
+
+    // Hash ngau nhien thay cho mat khau cu: khong ai biet chuoi goc, va van la
+    // mot bcrypt hash hop le nen bcrypt.compare khong nem loi.
+    const unusableHash = await bcrypt.hash(randomUUID(), 10);
+
+    const oldImage = await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        "SELECT password, image FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+        [req.userId]
+      );
+      const user = rows[0];
+      if (!user) throw new HttpError(404, "Không tìm thấy người dùng");
+      if (!(await bcrypt.compare(password, user.password))) {
+        throw new HttpError(400, "Mật khẩu không chính xác");
+      }
+
+      // Don dang xu ly that (COD, hoac VNPay da tra tien) va don cho hoan tien
+      const blocking = await client.query(
+        `SELECT count(*)::int AS n FROM orders
+         WHERE user_id = $1
+           AND ((status IN ('pending', 'confirmed', 'shipped')
+                 AND (payment_method <> 'vnpay' OR payment_status = 'paid'))
+                OR (refund_required AND payment_status <> 'refunded'))`,
+        [req.userId]
+      );
+      if (blocking.rows[0].n > 0) {
+        throw new HttpError(409,
+          "Bạn còn đơn hàng đang xử lý hoặc khoản tiền chờ hoàn. Vui lòng đợi hoàn tất rồi xóa tài khoản.");
+      }
+
+      // Don VNPay chua thanh toan: huy va tra lai ton kho. Gop so luong theo
+      // mon truoc khi cong: UPDATE ... FROM chi cap nhat moi dong foods MOT lan
+      // du khop nhieu dong order_items.
+      const abandoned = await client.query(
+        `UPDATE orders SET status = 'cancelled', cancel_reason = 'Tài khoản đã bị xóa'
+         WHERE user_id = $1 AND payment_method = 'vnpay' AND status = 'pending'
+           AND payment_status <> 'paid'
+         RETURNING id`,
+        [req.userId]
+      );
+      const abandonedIds = abandoned.rows.map((row) => row.id);
+      if (abandonedIds.length > 0) {
+        await client.query(
+          `UPDATE foods f SET stock = f.stock + i.quantity
+           FROM (SELECT food_id, sum(quantity)::int AS quantity FROM order_items
+                 WHERE order_id = ANY($1::uuid[]) GROUP BY food_id) i
+           WHERE f.id = i.food_id AND f.track_stock`,
+          [abandonedIds]
+        );
+        await client.query(
+          `INSERT INTO order_status_history (order_id, from_status, to_status, actor_role, changed_by, note)
+           SELECT id, 'pending', 'cancelled', 'customer', $2, 'Xoa tai khoan'
+           FROM unnest($1::uuid[]) AS id`,
+          [abandonedIds, req.userId]
+        );
+      }
+
+      await client.query(
+        `UPDATE orders SET ship_full_name = 'Đã xóa', ship_phone = '', ship_address = '', ship_note = ''
+         WHERE user_id = $1`,
+        [req.userId]
+      );
+      await client.query("DELETE FROM addresses WHERE user_id = $1", [req.userId]);
+      await client.query("DELETE FROM notifications WHERE user_id = $1", [req.userId]);
+      await client.query("DELETE FROM reviews WHERE user_id = $1", [req.userId]);
+      await client.query(
+        `UPDATE users SET
+           name = 'Người dùng đã xóa',
+           email = 'deleted-' || id::text || '@deleted.invalid',
+           password = $2,
+           phone = '', address = '', image = '',
+           is_active = false, is_admin = false,
+           token_version = token_version + 1,
+           deleted_at = now()
+         WHERE id = $1`,
+        [req.userId, unusableHash]
+      );
+      return user.image;
+    });
+
+    // Xoa file anh dai dien sau khi transaction da commit
+    if (oldImage) await deleteImageSafe(oldImage);
+    res.json({ success: true, message: "Tài khoản của bạn đã được xóa" });
+  } catch (error) {
+    sendHttpError(res, error, "Lỗi hệ thống khi xóa tài khoản",
+      (e) => logger.error("Delete account error:", e));
   }
 };

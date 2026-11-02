@@ -5,6 +5,7 @@ import {
   getMyOrders,
   getOrderById,
   getOrderByRequestId,
+  abandonPendingPayment,
   cancelOrder,
   listAllOrders,
   getOrderStats,
@@ -31,6 +32,8 @@ orderRouter.get("/my", authMiddleware, getMyOrders);
 orderRouter.get("/list", adminMiddleware, listAllOrders);
 orderRouter.get("/stats", adminMiddleware, getOrderStats);
 orderRouter.get("/request/:clientRequestId", authMiddleware, getOrderByRequestId);
+// Khach bo thanh toan VNPay dang cho de doi phuong thuc / doi gio hang
+orderRouter.post("/request/:clientRequestId/abandon", authMiddleware, abandonPendingPayment);
 orderRouter.get("/vnpay/return", handleVnpayReturn);
 orderRouter.get("/vnpay/ipn", handleVnpayIpn);
 orderRouter.put("/:id/status", adminMiddleware, updateOrderStatus);

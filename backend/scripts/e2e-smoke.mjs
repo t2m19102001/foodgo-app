@@ -239,14 +239,20 @@ const run = async () => {
     !(await api("GET", "/api/order/my", { token: cust })).body.orders.some((o) => o._id === vnpOrderId));
   check("don VNPay chua thanh toan KHONG hien trong GET /list cua admin",
     !(await api("GET", "/api/order/list", { token: admin })).body.orders.some((o) => o._id === vnpOrderId));
-  check("getOrderByRequestId tra 404 cho don chua thanh toan (giong het chua dat duoc)",
-    (await api("GET", `/api/order/request/${vnpRequestId}`, { token: cust })).status === 404);
+  const pendingCheck = await api("GET", `/api/order/request/${vnpRequestId}`, { token: cust });
+  check("getOrderByRequestId bao 'dang cho thanh toan', khong lo orderId",
+    pendingCheck.status === 200 && pendingCheck.body.paymentPending === true && pendingCheck.body.orderId === undefined,
+    JSON.stringify(pendingCheck.body).slice(0, 150));
+  const resubmitPending = await api("POST", "/api/order", { token: cust, json: vnpPayload });
+  check("gui lai khi chua thanh toan -> DUNG payUrl cu (khong vo hieu giao dich dang chay)",
+    resubmitPending.body.payUrl === payUrl, JSON.stringify(resubmitPending.body).slice(0, 150));
+  check("payUrl co vnp_ExpireDate", new URL(payUrl).searchParams.has("vnp_ExpireDate"));
 
   // Chu ky gia: khong duoc cap nhat trang thai thanh toan
   const forged = await api("GET", `/api/order/vnpay/ipn?vnp_TxnRef=${txnRef}&vnp_ResponseCode=00&vnp_SecureHash=deadbeef`);
   check("IPN chu ky gia -> RspCode 97", forged.body.RspCode === "97", JSON.stringify(forged.body));
   const returnForged = await fetch(`${BASE}/api/order/vnpay/return?vnp_TxnRef=${txnRef}&vnp_ResponseCode=00&vnp_SecureHash=deadbeef`);
-  check("return chu ky gia -> trang bao khong hop le", (await returnForged.text()).includes("khong hop le"));
+  check("return chu ky gia -> trang bao khong hop le", (await returnForged.text()).includes("không hợp lệ"));
   check("don van chua thanh toan sau chu ky gia",
     !(await api("GET", "/api/order/my", { token: cust })).body.orders.some((o) => o._id === vnpOrderId));
 

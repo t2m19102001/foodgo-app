@@ -10,6 +10,7 @@ import androidx.lifecycle.MutableLiveData;
 import com.foodgo_app.util.ApiErrorUtils;
 import com.foodgo_app.model.response.AuthResponse;
 import com.foodgo_app.repository.AuthRepository;
+import com.foodgo_app.util.CrashReporter;
 import com.foodgo_app.util.SessionManager;
 
 import retrofit2.Call;
@@ -85,6 +86,7 @@ public class AuthViewModel extends AndroidViewModel {
         AuthResponse body = response.body();
         if (response.isSuccessful() && body != null && body.isSuccess()) {
             sessionManager.saveSession(body.getToken(), body.getUserId(), body.getName(), body.isAdmin());
+            CrashReporter.setUserId(body.getUserId());
             authSuccess.setValue(true);
         } else {
             String message = body != null ? body.getMessage() : ApiErrorUtils.getMessage(response, "Đã có lỗi xảy ra");

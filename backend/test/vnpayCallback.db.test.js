@@ -125,9 +125,17 @@ test("don VNPay chua thanh toan: an khoi GET /my, /list, /stats va getOrderByReq
   assert.equal(stats.body.totalOrders, 0, "thong ke khong dem don chua thanh toan");
   assert.equal(stats.body.byStatus.find((s) => s.status === "pending").count, 0);
 
+  // Khong con tra 404 (404 lam app tu POST lai va server cap payUrl moi - goc
+  // cua loi "payUrl da thanh toan bi vo hieu"). Gio bao "dang cho thanh toan"
+  // va van KHONG lo orderId/order.
   const byRequestId = makeResponse();
   await order.getOrderByRequestId({ userId, params: { clientRequestId } }, byRequestId);
-  assert.equal(byRequestId.statusCode, 404, "giong het 'chua dat duoc' de app tu resubmit");
+  assert.equal(byRequestId.statusCode, 200);
+  assert.equal(byRequestId.body.paymentPending, true);
+  assert.equal(byRequestId.body.paymentStatus, "unpaid");
+  assert.ok(byRequestId.body.payUrl, "tra lai payUrl dang con han de mo lai");
+  assert.equal(byRequestId.body.orderId, undefined);
+  assert.equal(byRequestId.body.order, undefined);
 
   // Ngay ca GET /:id truc tiep (neu ai do co id) cung khong lo thong tin don
   // cho NGUOI KHONG LIEN QUAN - quyen so huu van duoc giu nguyen
@@ -180,7 +188,7 @@ test("don COD khong bao gio co payUrl trong response", { skip }, async () => {
   assert.equal(response.body.payUrl, undefined);
 });
 
-test("gui lai cung clientRequestId khi CHUA thanh toan -> cap payUrl MOI, khong tao don trung", { skip }, async () => {
+test("gui lai cung clientRequestId khi CHUA thanh toan -> tra lai DUNG payUrl cu, khong tao don trung", { skip }, async () => {
   const foodId = await makeFood(await makeCategory(), { price: 65000 });
   const userId = await makeUser();
   const clientRequestId = randomUUID();
@@ -193,8 +201,10 @@ test("gui lai cung clientRequestId khi CHUA thanh toan -> cap payUrl MOI, khong 
 
   assert.equal(second.statusCode, 200);
   assert.ok(second.body.payUrl);
-  assert.notEqual(second.body.payUrl, first.body.payUrl, "txnRef phai doi moi lan de tranh payUrl cu con hieu luc");
+  // Cap txnRef moi o day chinh la cach payUrl khach DANG thanh toan bi vo hieu
+  assert.equal(second.body.payUrl, first.body.payUrl, "payUrl con han thi phai dung lai");
   assert.equal(await countRows("orders"), 1, "van chi mot don duy nhat o phia server");
+  assert.equal(await countRows("payment_attempts"), 1);
 });
 
 test("gui lai cung clientRequestId SAU KHI da thanh toan -> tra ve don, khong tao payUrl moi", { skip }, async () => {
@@ -229,7 +239,8 @@ test("don VNPay da bi huy thi khong cap lai payUrl", { skip }, async () => {
 
   const retry = makeResponse();
   await order.placeOrder({ userId, ip: "127.0.0.1", body }, retry);
-  assert.equal(retry.statusCode, 400);
+  // 410: app doc 4xx nay la "xoa yeu cau dang cho, cho dat lai"
+  assert.equal(retry.statusCode, 410);
   assert.equal(retry.body.payUrl, undefined);
 });
 
@@ -281,22 +292,16 @@ test("vnp_TmnCode la cua merchant khac -> tu choi", { skip }, async () => {
   assert.equal((await paymentStatusOf(orderId)).payment_status, "unpaid");
 });
 
-test("vnp_TxnRef cu (payUrl sinh tu lan truoc) bi tu choi", { skip }, async () => {
+test("vnp_TxnRef server chua tung cap cho don -> tu choi (01), khong ghi ledger", { skip }, async () => {
   const foodId = await makeFood(await makeCategory(), { price: 65000 });
-  const { userId, clientRequestId, orderId, txnRef: oldRef, amount } = await placeVnpayOrder(foodId, 65000);
-
-  // Goi lai placeOrder voi cung clientRequestId -> vnp_txn_ref trong DB doi
-  await order.placeOrder({
-    userId, ip: "127.0.0.1",
-    body: { items: [{ foodId, quantity: 1 }], address, clientRequestId, paymentMethod: "vnpay" },
-  }, makeResponse());
+  const { orderId, amount } = await placeVnpayOrder(foodId, 65000);
 
   const response = makeResponse();
-  await order.handleVnpayIpn({ query: callback({ txnRef: oldRef, amountVnd: amount }) }, response);
-  // Truoc day vnpTxnRef duoc ghi vao DB roi khong bao gio doc lai, nen mot
-  // payUrl sinh ra tu lan truoc van thanh toan duoc vinh vien.
-  assert.equal(response.body.RspCode, "02");
+  await order.handleVnpayIpn(
+    { query: callback({ txnRef: `${orderId}-123456789`, amountVnd: amount }) }, response);
+  assert.equal(response.body.RspCode, "01");
   assert.equal((await paymentStatusOf(orderId)).payment_status, "unpaid");
+  assert.equal(await countRows("payments"), 0);
 });
 
 test("callback hop le -> paid, pending chuyen sang confirmed, ghi ledger va thong bao", { skip }, async () => {
@@ -362,4 +367,241 @@ test("Return URL va IPN ve SONG SONG -> van chi mot ban ghi", { skip }, async ()
   assert.equal(await countRows("payments", "WHERE order_id = $1", [orderId]), 1);
   assert.equal(await countRows("notifications", "WHERE user_id = $1", [userId]), 1);
   assert.equal((await paymentStatusOf(orderId)).payment_status, "paid");
+});
+
+// ---------------------------------------------------------------------------
+// Tai hien hai loi Critical trong ban review ngay 02/11/2026
+
+const resend = (userId, foodId, clientRequestId) => {
+  const response = makeResponse();
+  return order.placeOrder({
+    userId, ip: "127.0.0.1",
+    body: { items: [{ foodId, quantity: 1 }], address, clientRequestId, paymentMethod: "vnpay" },
+  }, response).then(() => response);
+};
+
+test("CRITICAL #1: that bai mot lan, thanh toan lai thanh cong -> don PAID va hien ra", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { price: 65000 });
+  const { userId, clientRequestId, orderId, txnRef, amount } = await placeVnpayOrder(foodId, 65000);
+
+  // Lan 1: khach bam huy tren cong VNPay (24), VNPay gui TransactionNo = 0
+  const firstIpn = makeResponse();
+  await order.handleVnpayIpn({ query: callback({
+    txnRef, amountVnd: amount, responseCode: "24", transactionStatus: "02", transactionNo: "0",
+  }) }, firstIpn);
+  assert.equal(firstIpn.body.RspCode, "00");
+  assert.equal((await paymentStatusOf(orderId)).payment_status, "failed");
+
+  // App bam "Thanh toan lai" -> lan truoc that bai nen phai co txnRef MOI
+  const retry = await resend(userId, foodId, clientRequestId);
+  assert.equal(retry.statusCode, 200);
+  const newRef = new URL(retry.body.payUrl).searchParams.get("vnp_TxnRef");
+  assert.notEqual(newRef, txnRef);
+
+  // Lan 2 thanh cong. Truoc khi sua: UPDATE ... WHERE payment_status = 'unpaid'
+  // khong khop, don van 'failed' va bi an trong khi VNPay da tru tien.
+  const secondIpn = makeResponse();
+  await order.handleVnpayIpn(
+    { query: callback({ txnRef: newRef, amountVnd: amount, transactionNo: "14000002" }) }, secondIpn);
+  assert.equal(secondIpn.body.RspCode, "00");
+
+  const row = await paymentStatusOf(orderId);
+  assert.equal(row.payment_status, "paid");
+  assert.equal(row.status, "confirmed");
+
+  const my = makeResponse();
+  await order.getMyOrders({ userId, query: {} }, my);
+  assert.equal(my.body.orders.length, 1, "don da tra tien phai hien voi khach");
+
+  const byRequestId = makeResponse();
+  await order.getOrderByRequestId({ userId, params: { clientRequestId } }, byRequestId);
+  assert.equal(byRequestId.body.orderId, orderId);
+  assert.equal(await countRows("notifications", "WHERE user_id = $1 AND title = $2",
+    [userId, "Đặt hàng & thanh toán thành công"]), 1);
+});
+
+test("CRITICAL #2: IPN cua payUrl cu ve SAU khi da cap payUrl moi van duoc ghi nhan", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { price: 65000 });
+  const { userId, clientRequestId, orderId, txnRef: firstRef, amount } = await placeVnpayOrder(foodId, 65000);
+
+  // Lan thanh toan dau that bai -> app cap lan thanh toan moi (txnRef moi)
+  await order.handleVnpayIpn({ query: callback({
+    txnRef: firstRef, amountVnd: amount, responseCode: "24", transactionStatus: "02", transactionNo: "0",
+  }) }, makeResponse());
+  const retry = await resend(userId, foodId, clientRequestId);
+  const secondRef = new URL(retry.body.payUrl).searchParams.get("vnp_TxnRef");
+  assert.notEqual(secondRef, firstRef);
+
+  // Gia su khach van thanh toan duoc tren tab cu (txnRef dau tien). Truoc khi
+  // sua: txnRef khong con khop vnp_txn_ref moi nhat -> RspCode 02, khong ghi
+  // ledger, tien mat dau vet.
+  const lateIpn = makeResponse();
+  await order.handleVnpayIpn(
+    { query: callback({ txnRef: firstRef, amountVnd: amount, transactionNo: "14000003" }) }, lateIpn);
+  assert.equal(lateIpn.body.RspCode, "00");
+  assert.equal((await paymentStatusOf(orderId)).payment_status, "paid");
+  assert.equal(await countRows("payments", "WHERE vnp_transaction_no = $1", ["14000003"]), 1);
+});
+
+test("CRITICAL #2: kiem tra lai truoc khi IPN ve -> 'dang cho', KHONG cap txnRef moi", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { price: 65000 });
+  const { userId, clientRequestId, orderId, txnRef, amount, payUrl } = await placeVnpayOrder(foodId, 65000);
+
+  // Khach vua tra tien xong, quay lai app bam "Kiem tra" truoc khi IPN den
+  const check = makeResponse();
+  await order.getOrderByRequestId({ userId, params: { clientRequestId } }, check);
+  assert.equal(check.statusCode, 200);
+  assert.equal(check.body.paymentPending, true);
+  assert.equal(check.body.payUrl, payUrl);
+
+  // Ke ca khi app cu van POST lai, txnRef cung khong doi
+  const again = await resend(userId, foodId, clientRequestId);
+  assert.equal(again.body.payUrl, payUrl);
+  assert.equal(await countRows("payment_attempts", "WHERE order_id = $1", [orderId]), 1);
+
+  const ipn = makeResponse();
+  await order.handleVnpayIpn({ query: callback({ txnRef, amountVnd: amount }) }, ipn);
+  assert.equal(ipn.body.RspCode, "00");
+  assert.equal((await paymentStatusOf(orderId)).payment_status, "paid");
+});
+
+test("payUrl co vnp_ExpireDate theo gio Viet Nam", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { price: 65000 });
+  const { payUrl } = await placeVnpayOrder(foodId, 65000);
+  const params = new URL(payUrl).searchParams;
+  const created = params.get("vnp_CreateDate");
+  const expires = params.get("vnp_ExpireDate");
+  assert.match(created, /^\d{14}$/);
+  assert.match(expires, /^\d{14}$/);
+  assert.ok(expires > created, "han thanh toan phai sau luc tao");
+});
+
+test("tien ve cho don DA HET HAN -> khong mat tien: ghi ledger + refund_required, admin thay don", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { price: 65000 });
+  const { userId, orderId, txnRef, amount } = await placeVnpayOrder(foodId, 65000);
+  const adminId = await makeUser({ email: "admin@test.local", isAdmin: true });
+  await db.query("UPDATE orders SET payment_expires_at = now() - interval '1 hour' WHERE id = $1", [orderId]);
+  assert.equal(await order.expireStaleVnpayOrders({ graceMinutes: 0 }), 1);
+
+  const ipn = makeResponse();
+  await order.handleVnpayIpn({ query: callback({ txnRef, amountVnd: amount }) }, ipn);
+  assert.equal(ipn.body.RspCode, "00", "da ghi nhan giao dich, VNPay khong can goi lai");
+
+  const row = (await db.query(
+    "SELECT status, payment_status, refund_required FROM orders WHERE id = $1", [orderId])).rows[0];
+  assert.equal(row.status, "cancelled");
+  assert.notEqual(row.payment_status, "paid", "constraint: khong the vua paid vua cancelled");
+  assert.equal(row.refund_required, true);
+  assert.equal(await countRows("payments", "WHERE order_id = $1", [orderId]), 1);
+
+  const list = makeResponse();
+  await order.listAllOrders({ userId: adminId, query: {} }, list);
+  assert.equal(list.body.orders.length, 1, "admin phai thay don can hoan tien");
+  assert.equal(list.body.orders[0].refundRequired, true);
+  assert.equal(await countRows("notifications", "WHERE user_id = $1 AND title = $2",
+    [userId, "Thanh toán sẽ được hoàn lại"]), 1);
+});
+
+test("khach tra HAI LAN cho cung mot don -> lan hai danh dau refund_required", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { price: 65000 });
+  const { orderId, txnRef, amount } = await placeVnpayOrder(foodId, 65000);
+  await order.handleVnpayIpn({ query: callback({ txnRef, amountVnd: amount, transactionNo: "1" }) }, makeResponse());
+  const second = makeResponse();
+  await order.handleVnpayIpn({ query: callback({ txnRef, amountVnd: amount, transactionNo: "2" }) }, second);
+
+  assert.equal(second.body.RspCode, "00");
+  const row = (await db.query(
+    "SELECT payment_status, refund_required FROM orders WHERE id = $1", [orderId])).rows[0];
+  assert.equal(row.payment_status, "paid");
+  assert.equal(row.refund_required, true);
+  assert.equal(await countRows("payments", "WHERE order_id = $1", [orderId]), 2);
+});
+
+// ---------------------------------------------------------------------------
+// Het han thanh toan va huy / doi phuong thuc
+
+test("job het han huy don VNPay qua han va hoan kho; bo qua don con han va don da tra", { skip }, async () => {
+  const categoryId = await makeCategory();
+  const tracked = await makeFood(categoryId, { name: "Mon dem suat", price: 50000, stock: 5, trackStock: true });
+  const stale = await placeVnpayOrder(tracked, 50000);
+  const fresh = await placeVnpayOrder(tracked, 50000);
+  const paid = await placeVnpayOrder(tracked, 50000);
+  await order.handleVnpayIpn({ query: callback({ txnRef: paid.txnRef, amountVnd: 50000 }) }, makeResponse());
+  assert.equal((await db.query("SELECT stock FROM foods WHERE id = $1", [tracked])).rows[0].stock, 2);
+
+  await db.query("UPDATE orders SET payment_expires_at = now() - interval '40 minutes' WHERE id = ANY($1)",
+    [[stale.orderId, paid.orderId]]);
+  // An han 15 phut: qua han 40 phut thi huy
+  assert.equal(await order.expireStaleVnpayOrders({ graceMinutes: 15 }), 1);
+
+  assert.equal((await paymentStatusOf(stale.orderId)).status, "cancelled");
+  assert.equal((await paymentStatusOf(fresh.orderId)).status, "pending");
+  assert.equal((await paymentStatusOf(paid.orderId)).status, "confirmed");
+  assert.equal((await db.query("SELECT stock FROM foods WHERE id = $1", [tracked])).rows[0].stock, 3,
+    "suat cua don het han duoc tra lai");
+  const history = await db.query(
+    "SELECT actor_role FROM order_status_history WHERE order_id = $1 AND to_status = 'cancelled'",
+    [stale.orderId]);
+  assert.equal(history.rows[0].actor_role, "system");
+
+  // App kiem tra lai -> 410, va gui lai cung khong hoi sinh duoc don
+  const check = makeResponse();
+  await order.getOrderByRequestId({ userId: stale.userId, params: { clientRequestId: stale.clientRequestId } }, check);
+  assert.equal(check.statusCode, 410);
+
+  // Chay lai khong lam gi them
+  assert.equal(await order.expireStaleVnpayOrders({ graceMinutes: 15 }), 0);
+});
+
+test("huy thanh toan VNPay dang cho -> huy don, hoan kho, idempotent", { skip }, async () => {
+  const tracked = await makeFood(await makeCategory(), { price: 50000, stock: 2, trackStock: true });
+  const { userId, clientRequestId, orderId } = await placeVnpayOrder(tracked, 50000);
+  assert.equal((await db.query("SELECT stock FROM foods WHERE id = $1", [tracked])).rows[0].stock, 1);
+
+  for (let i = 0; i < 2; i += 1) {
+    const response = makeResponse();
+    await order.abandonPendingPayment({ userId, params: { clientRequestId } }, response);
+    assert.equal(response.statusCode, 200, JSON.stringify(response.body));
+  }
+  assert.equal((await paymentStatusOf(orderId)).status, "cancelled");
+  assert.equal((await db.query("SELECT stock FROM foods WHERE id = $1", [tracked])).rows[0].stock, 2,
+    "chi hoan kho mot lan du goi hai lan");
+});
+
+test("huy thanh toan: ma chua toi server -> 404; don COD that -> 409 kem don; nguoi khac -> 404", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { price: 65000 });
+  const userId = await makeUser();
+
+  const unknown = makeResponse();
+  await order.abandonPendingPayment({ userId, params: { clientRequestId: randomUUID() } }, unknown);
+  assert.equal(unknown.statusCode, 404);
+
+  const clientRequestId = randomUUID();
+  const placed = makeResponse();
+  await order.placeOrder({ userId, ip: "127.0.0.1", body: {
+    items: [{ foodId, quantity: 1 }], address, clientRequestId, paymentMethod: "cod",
+  } }, placed);
+  const cod = makeResponse();
+  await order.abandonPendingPayment({ userId, params: { clientRequestId } }, cod);
+  assert.equal(cod.statusCode, 409);
+  assert.equal(cod.body.orderId, placed.body.orderId);
+  assert.equal((await paymentStatusOf(placed.body.orderId)).status, "pending", "don COD khong bi huy");
+
+  const vnpay = await placeVnpayOrder(foodId, 65000);
+  const outsider = makeResponse();
+  await order.abandonPendingPayment(
+    { userId: await makeUser({ email: "nguoila@test.local" }), params: { clientRequestId: vnpay.clientRequestId } },
+    outsider);
+  assert.equal(outsider.statusCode, 404);
+  assert.equal((await paymentStatusOf(vnpay.orderId)).status, "pending");
+});
+
+test("don VNPay da tra tien: khong hien nut Huy (isCancellable = false)", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { price: 65000 });
+  const { userId, orderId, txnRef, amount } = await placeVnpayOrder(foodId, 65000);
+  await order.handleVnpayIpn({ query: callback({ txnRef, amountVnd: amount }) }, makeResponse());
+
+  const detail = makeResponse();
+  await order.getOrderById({ userId, user: { isAdmin: false }, params: { id: orderId } }, detail);
+  assert.equal(detail.body.order.isCancellable, false);
 });

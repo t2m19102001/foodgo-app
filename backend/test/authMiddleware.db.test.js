@@ -131,3 +131,36 @@ test("adminMiddleware la chuoi hai middleware chay noi tiep", { skip }, async ()
   await first(req, res, () => second(req, res, () => { reachedHandler = true; }));
   assert.equal(reachedHandler, true, "admin that phai di toi handler");
 });
+
+test("loi DB khi xac thuc -> 503, KHONG phai 401 (app khong xoa phien dang nhap)", { skip }, async () => {
+  const userId = await makeUser();
+  const token = tokenFor(userId);
+  // Gia lap DB mat ket noi dung luc middleware doc users
+  const original = db.default.query;
+  db.default.query = async () => { throw new Error("Connection terminated unexpectedly"); };
+  try {
+    const { res, passed } = await callAuth({ authorization: `Bearer ${token}` });
+    assert.equal(res.statusCode, 503);
+    assert.equal(passed, false);
+  } finally {
+    db.default.query = original;
+  }
+
+  // DB song lai thi cung token do van dung duoc - phien chua bao gio bi huy
+  const { passed } = await callAuth({ authorization: `Bearer ${token}` });
+  assert.equal(passed, true);
+});
+
+test("token ky dung secret nhung id khong phai uuid -> 401, khong cham DB", { skip }, async () => {
+  const { res, passed } = await callAuth({ authorization: `Bearer ${tokenFor("khong-phai-uuid")}` });
+  assert.equal(res.statusCode, 401);
+  assert.equal(passed, false);
+});
+
+test("tai khoan da xoa (deleted_at) -> 401", { skip }, async () => {
+  const userId = await makeUser();
+  await db.query("UPDATE users SET deleted_at = now() WHERE id = $1", [userId]);
+  const { res, passed } = await callAuth({ authorization: `Bearer ${tokenFor(userId)}` });
+  assert.equal(res.statusCode, 401);
+  assert.equal(passed, false);
+});

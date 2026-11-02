@@ -12,6 +12,7 @@
     "migrate": "node scripts/migrate.mjs",
     "verify:db": "node scripts/verify-db.mjs",
     "seed": "node scripts/seed.mjs",
+    "reconcile": "node scripts/reconcile-payments.mjs",
     "test:db": "node --test --test-concurrency=1 test/*.db.test.js"
   },
   "dependencies": {

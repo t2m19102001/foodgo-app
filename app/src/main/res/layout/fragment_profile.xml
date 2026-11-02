@@ -143,6 +143,19 @@
                     android:drawableStart="@drawable/ic_lock"
                     android:drawableEnd="@drawable/ic_chevron_right"
                     android:text="Đổi mật khẩu" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginStart="50dp"
+                    android:background="@color/divider" />
+
+                <TextView
+                    android:id="@+id/btn_privacy_policy"
+                    style="@style/Text.App.MenuRow"
+                    android:drawableStart="@drawable/ic_note"
+                    android:drawableEnd="@drawable/ic_chevron_right"
+                    android:text="Chính sách quyền riêng tư" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -236,6 +249,21 @@
                 android:textColor="@color/error"
                 android:textStyle="bold" />
         </com.google.android.material.card.MaterialCardView>
+
+        <!-- Bat buoc voi app cho tao tai khoan (Google Play / App Store) -->
+        <TextView
+            android:id="@+id/btn_delete_account"
+            style="@style/Text.App.Caption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="12dp"
+            android:minHeight="48dp"
+            android:gravity="center"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:text="Xóa tài khoản"
+            android:textColor="@color/error" />
 
         <ProgressBar
             android:id="@+id/progress_bar"

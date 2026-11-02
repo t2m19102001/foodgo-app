@@ -17,6 +17,8 @@ public class Order {
     private String cancelReason;
     private String date;
     private boolean isCancellable;
+    // Tien VNPay ve sau khi don da het han/huy, hoac khach tra hai lan: can hoan tien
+    private boolean refundRequired;
     // Chi co gia tri khi goi API admin, cac API cua user tra ve null
     private Customer customer;
 
@@ -31,5 +33,6 @@ public class Order {
     public String getCancelReason() { return cancelReason; }
     public String getDate() { return date; }
     public boolean isCancellable() { return isCancellable; }
+    public boolean isRefundRequired() { return refundRequired; }
     public Customer getCustomer() { return customer; }
 }

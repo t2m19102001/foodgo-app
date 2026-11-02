@@ -35,6 +35,10 @@ public class OrderRepository {
         return apiService.getOrderByRequestId(clientRequestId);
     }
 
+    public Call<OrderDetailResponse> abandonPendingPayment(String clientRequestId) {
+        return apiService.abandonPendingPayment(clientRequestId);
+    }
+
     public Call<OrderListResponse> getMyOrders(int page, int limit, @Nullable String status) {
         return apiService.getMyOrders(page, limit, status);
     }

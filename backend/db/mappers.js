@@ -75,8 +75,11 @@ export const mapOrder = (row, items = []) => row && {
   date: row.created_at,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
-  // Thay cho virtual isCancellable cua Mongoose
-  isCancellable: CANCELLABLE.includes(row.status),
+  // Thay cho virtual isCancellable cua Mongoose. Don da tra tien thi server tra
+  // 409 khi huy (phai hoan tien truoc), nen khong hien nut Huy cho khach.
+  isCancellable: CANCELLABLE.includes(row.status) && row.payment_status !== "paid",
+  // Tien VNPay ve cho don da het han/huy hoac ve hai lan: cho admin hoan tien
+  refundRequired: Boolean(row.refund_required),
   // Chi co o API admin; app doc Order.customer
   customer: row.customer_name === undefined || row.customer_name === null
     ? undefined

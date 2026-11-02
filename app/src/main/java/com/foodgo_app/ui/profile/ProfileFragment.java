@@ -1,6 +1,7 @@
 package com.foodgo_app.ui.profile;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -25,6 +26,7 @@ import com.foodgo_app.ui.admin.AdminFoodActivity;
 import com.foodgo_app.ui.admin.AdminOrderActivity;
 import com.foodgo_app.ui.admin.AdminStatsActivity;
 import com.foodgo_app.ui.auth.LoginActivity;
+import com.foodgo_app.util.Constants;
 import com.foodgo_app.util.ImageUrlHelper;
 import com.foodgo_app.util.SessionManager;
 
@@ -67,6 +69,12 @@ public class ProfileFragment extends Fragment {
 
         view.findViewById(R.id.btn_change_password).setOnClickListener(v ->
                 startActivity(new Intent(getActivity(), ChangePasswordActivity.class)));
+
+        view.findViewById(R.id.btn_privacy_policy).setOnClickListener(v ->
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(Constants.PRIVACY_POLICY_URL))));
+
+        view.findViewById(R.id.btn_delete_account).setOnClickListener(v ->
+                startActivity(new Intent(getActivity(), DeleteAccountActivity.class)));
 
         // Khu vuc quan tri chi mo cho tai khoan admin
         if (new SessionManager(requireContext()).isAdmin()) {

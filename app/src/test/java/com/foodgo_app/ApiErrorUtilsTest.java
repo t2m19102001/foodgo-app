@@ -43,4 +43,23 @@ public class ApiErrorUtilsTest {
     public void fallsBackWhenThereIsNoErrorBodyAtAll() {
         assertEquals("Thất bại", ApiErrorUtils.getMessage(Response.success("ok"), "Thất bại"));
     }
+
+    @Test
+    public void parsesConflictBodyThatCarriesTheExistingOrder() {
+        Response<String> response = Response.error(409, errorBody(
+                "{\"success\":false,\"message\":\"Đơn hàng đã được tạo\",\"orderId\":\"abc-123\"}"));
+
+        com.foodgo_app.model.response.OrderDetailResponse body = ApiErrorUtils.parseErrorBody(
+                response, com.foodgo_app.model.response.OrderDetailResponse.class);
+
+        assertEquals("abc-123", body.getOrderId());
+        assertEquals("Đơn hàng đã được tạo", body.getMessage());
+    }
+
+    @Test
+    public void parseErrorBodyReturnsNullOnGarbage() {
+        assertEquals(null, ApiErrorUtils.parseErrorBody(
+                Response.error(502, errorBody("<html>502</html>")),
+                com.foodgo_app.model.response.OrderDetailResponse.class));
+    }
 }

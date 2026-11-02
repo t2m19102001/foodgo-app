@@ -249,6 +249,39 @@
             },
             "description": "Tang tokenVersion nen moi token cu lap tuc het hieu luc."
           }
+        },
+        {
+          "name": "Xoa tai khoan (an danh hoa)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"matkhau123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "account"
+              ]
+            },
+            "description": "Tang tokenVersion nen moi token cu lap tuc het hieu luc."
+          }
         }
       ]
     },
@@ -692,23 +725,49 @@
           }
         },
         {
-          "name": "Tao thanh toan VNPay",
+          "name": "Dat hang (VNPay) - tra ve payUrl",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{baseUrl}}/api/order/{{orderId}}/vnpay/create-payment",
+              "raw": "{{baseUrl}}/api/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "order"
+              ]
+            },
+            "description": "Don VNPay khong tra orderId cho den khi thanh toan xong. Gui lai cung clientRequestId khi payUrl con han -> tra lai DUNG payUrl do.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"foodId\": \"{{foodId}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"address\": {\n    \"fullName\": \"Nguyen Van A\",\n    \"phone\": \"0900000000\",\n    \"address\": \"1 Le Loi\",\n    \"note\": \"\"\n  },\n  \"clientRequestId\": \"{{$guid}}\",\n  \"paymentMethod\": \"vnpay\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Huy thanh toan VNPay dang cho",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/order/request/{{clientRequestId}}/abandon",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "order",
-                "{{orderId}}",
-                "vnpay",
-                "create-payment"
+                "request",
+                "{{clientRequestId}}",
+                "abandon"
               ]
             },
-            "description": "Tra ve payUrl de mo trong trinh duyet. Can cac bien VNPAY_* trong .env (sandbox)."
+            "description": "Huy don VNPay chua thanh toan va hoan kho. 404 = chua co don; 409 = don da ton tai (COD/da tra tien), tra kem don."
           }
         },
         {
