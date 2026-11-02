@@ -13,7 +13,7 @@
 
 ## 1. Tính năng
 
-**Khách hàng:** đăng ký/đăng nhập (tự đăng nhập lại bằng token đã lưu) · trang chủ có tìm kiếm, lọc danh mục, món hết hàng bị làm mờ · chi tiết món kèm đánh giá · giỏ hàng lưu trên máy · sổ địa chỉ (có địa chỉ mặc định) · đặt hàng COD/VNPay · lịch sử đơn (phân trang, lọc trạng thái) · hủy đơn kèm lý do · theo dõi đơn 4 bước tự cập nhật mỗi 5 giây · đánh giá món đã nhận · thông báo kèm badge số chưa đọc · sửa hồ sơ, đổi mật khẩu.
+**Khách hàng:** đăng ký/đăng nhập (tự đăng nhập lại bằng token đã lưu) · trang chủ có tìm kiếm, lọc danh mục, món hết hàng bị làm mờ · chi tiết món kèm đánh giá · giỏ hàng lưu trên máy · sổ địa chỉ (có địa chỉ mặc định) · đặt hàng COD/VNPay · lịch sử đơn (phân trang, lọc trạng thái) · hủy đơn kèm lý do · hủy thanh toán VNPay đang chờ để đổi phương thức · theo dõi đơn 4 bước tự cập nhật mỗi 5 giây · đánh giá món đã nhận · thông báo kèm badge số chưa đọc · sửa hồ sơ, đổi mật khẩu · xóa tài khoản · xem Chính sách quyền riêng tư.
 
 **Quản trị viên** (`isAdmin = true`, mục QUẢN TRỊ trong trang Tài khoản): quản lý đơn hàng (lọc trạng thái, chuyển trạng thái theo đúng luồng, mỗi lần đổi đều sinh thông báo cho khách) · quản lý món ăn (CRUD kèm ảnh, bật/tắt hết hàng) · quản lý danh mục (không xóa/đổi tên danh mục đang có món) · thống kê doanh thu (tổng, theo trạng thái, 7 ngày gần nhất).
 
@@ -29,12 +29,12 @@
 cd backend
 npm install
 cp .env.example .env     # rồi điền giá trị
-npm run migrate          # tạo 10 bảng + 1 view
+npm run migrate          # tạo 11 bảng + 1 view (chạy lại để nhận migration mới)
 npm run seed             # 5 danh mục, 9 món, trỏ vào ảnh demo có sẵn
 npm run dev              # hoặc npm start
 ```
 
-`.env` cần: `PORT`, `DATABASE_URL`, `JWT_SECRET`, `NODE_ENV`, `CORS_ORIGINS`, và nhóm `VNPAY_*` nếu dùng VNPay (đăng ký sandbox tại https://sandbox.vnpayment.vn/devreg/). Để `PGSSL` trống với Postgres có TLS (Neon, Supabase); đặt `PGSSL=disable` với Postgres local không TLS.
+`.env` cần: `PORT`, `DATABASE_URL`, `JWT_SECRET`, `NODE_ENV`, `CORS_ORIGINS`, và nhóm `VNPAY_*` nếu dùng VNPay (`VNPAY_PAYMENT_TTL_MINUTES`, `VNPAY_EXPIRY_GRACE_MINUTES` tùy chọn, mặc định 15 + 15 phút) (đăng ký sandbox tại https://sandbox.vnpayment.vn/devreg/). Để `PGSSL` trống với Postgres có TLS (Neon, Supabase); đặt `PGSSL=disable` với Postgres local không TLS.
 
 `npm run migrate` chạy các file SQL trong `backend/migrations/` theo thứ tự tên, mỗi file đúng một lần (ghi lại trong bảng `schema_migrations`), nên gọi lại bao nhiêu lần cũng được.
 
@@ -88,15 +88,17 @@ Import `docs/foodgo.postman_collection.json` vào Postman để bấm thử ngay
 | Health | `GET /api/health` | P | `200` khi PostgreSQL đã kết nối, `503` khi chưa |
 | Auth | `POST /api/auth/register` · `POST /login` | P | Trả token. Giới hạn 10 lần/giờ (register) và 10 lần **sai**/15 phút (login) mỗi IP |
 | | `GET /api/auth/profile` · `PUT /profile` · `PUT /change-password` | U | `PUT /profile` là multipart, field ảnh tên `image`. Đổi mật khẩu làm token cũ hết hiệu lực |
+| | `DELETE /api/auth/account` | U | Body `{ password }`. Ẩn danh hóa tài khoản (xem mục 5). `409` nếu còn đơn đang xử lý hoặc tiền chờ hoàn |
+| Trang công khai | `GET /privacy` · `GET /account-deletion` | P | Privacy Policy và hướng dẫn xóa tài khoản để khai báo trên Google Play (**cần điền thông tin đơn vị vận hành**) |
 | Food | `GET /api/food?q=` · `GET /:id` · `GET /category/:category` | P | `page`/`limit` tùy chọn (`limit` ≤ 100); không truyền thì trả như cũ, chặn trên 200 bản ghi. `q` tìm **bỏ dấu**: gõ `pho bo` ra `Phở bò` |
 | | `POST /api/food` · `PUT /:id` · `DELETE /:id` | A | Multipart; khi sửa, mọi field đều optional kể cả `isAvailable` và `stock` |
 | Category | `GET /api/category` | P | Phân trang tùy chọn như `/api/food` |
 | | `POST /api/category` · `PUT /:id` · `DELETE /:id` | A | **Đổi tên danh mục đang có món hoạt động bình thường** (khóa ngoại `ON UPDATE CASCADE`). Vẫn chặn **xóa** danh mục đang có món, do chính DB chặn (`ON DELETE RESTRICT`) |
 | Order | `POST /api/order` | U | Gửi kèm `clientRequestId` (UUID); gửi lại cùng mã trả về đúng đơn cũ. Server tự tra giá từ DB, số tiền client gửi lên bị bỏ qua |
-| | `GET /api/order/request/:clientRequestId` | U | Dò lại đơn sau khi mất mạng/timeout |
+| | `GET /api/order/request/:clientRequestId` | U | Dò lại đơn sau khi mất mạng/timeout: `404` chưa có đơn · `200 {orderId, order}` · `200 {paymentPending, paymentStatus, payUrl?}` đơn VNPay đang chờ (không lộ orderId) · `410` phiên VNPay hết hạn/đã hủy |
+| | `POST /api/order/request/:clientRequestId/abandon` | U | Bỏ thanh toán VNPay đang chờ để đổi phương thức: hủy đơn, hoàn kho. `409` kèm đơn nếu đơn đã tồn tại thật |
 | | `GET /api/order/my?page=&limit=&status=` · `GET /:id` · `PUT /:id/cancel` | U | Chỉ thấy/hủy đơn của mình; hủy được khi đơn `pending` hoặc `confirmed` **và chưa thanh toán** (đơn đã trả tiền trả `409`, phải hoàn tiền trước). Hủy đơn hoàn lại tồn kho |
-| | `POST /api/order/:id/vnpay/create-payment` | U | Trả `payUrl` để mở cổng VNPay. Chỉ cho đơn đang `pending`/`confirmed` — đơn đã hủy hoặc đã giao thì từ chối |
-| | `GET /api/order/vnpay/return` · `GET /vnpay/ipn` | P | VNPay gọi về; xác thực chữ ký HMAC **và** đối chiếu `vnp_Amount`, `vnp_TxnRef`, `vnp_TransactionStatus`, `vnp_TmnCode`, ghi sổ vào bảng `payments` rồi mới cập nhật `paymentStatus`. Lệch số tiền trả `RspCode 04` |
+| | `GET /api/order/vnpay/return` · `GET /vnpay/ipn` | P | VNPay gọi về; xác thực chữ ký HMAC **và** đối chiếu `vnp_Amount`, `vnp_TxnRef` (phải là một lần thanh toán server đã cấp, ghi trong `payment_attempts`), `vnp_TransactionStatus`, `vnp_TmnCode`, ghi sổ vào bảng `payments` rồi mới cập nhật `paymentStatus`. Lệch số tiền trả `RspCode 04` |
 | | `GET /api/order/list?page=&limit=&status=` · `GET /stats` | A | Toàn bộ đơn (kèm field `customer`) và thống kê doanh thu |
 | | `PUT /api/order/:id/status` | A | Trả `409` nếu trạng thái đã bị đổi trước đó |
 | Review | `GET /api/review/food/:foodId` | P | |
@@ -106,7 +108,9 @@ Import `docs/foodgo.postman_collection.json` vào Postman để bấm thử ngay
 
 **Luồng trạng thái đơn:** `pending → confirmed → shipped → delivered`, hoặc `cancelled` từ `pending`/`confirmed`. `delivered` và `cancelled` là trạng thái kết thúc. Mỗi lần đổi đều ghi một dòng vào `order_status_history` kèm người thực hiện — vừa là dữ liệu cho tracker 4 bước, vừa là audit log.
 
-**`paymentStatus`:** `unpaid → paid | failed`, và `paid → refunded`. Ràng buộc `orders_paid_not_cancelled` ở tầng DB không cho phép đơn vừa `paid` vừa `cancelled`: muốn hủy đơn đã thanh toán thì phải chuyển `paymentStatus` sang `refunded` trước.
+**Đặt hàng VNPay:** `POST /api/order` với `paymentMethod: "vnpay"` chỉ trả `payUrl` (có `vnp_ExpireDate`, mặc định 15 phút). Gửi lại cùng `clientRequestId` khi payUrl còn hạn trả lại **đúng payUrl đó**; lần trước thất bại hoặc hết hạn thì cấp lần thanh toán mới. Mọi `txnRef` đã cấp đều được lưu trong `payment_attempts` và vẫn hợp lệ khi IPN về trễ. Đơn quá hạn + 15 phút ân hạn bị job trong `server.js` tự hủy (mỗi phút) và hoàn kho.
+
+**`paymentStatus`:** `unpaid → paid | failed`, `failed → paid` (thanh toán lại thành công), và `paid → refunded`. Tiền về cho đơn đã hết hạn/hủy, hoặc về lần thứ hai cho đơn đã `paid`, **không bị bỏ qua**: giao dịch vẫn ghi vào `payments` và đơn được đánh dấu `refund_required = true` (hiện với admin, khách nhận thông báo sẽ được hoàn tiền). `npm run reconcile` liệt kê mọi sai lệch giữa sổ `payments` và trạng thái đơn. Ràng buộc `orders_paid_not_cancelled` ở tầng DB không cho phép đơn vừa `paid` vừa `cancelled`: muốn hủy đơn đã thanh toán thì phải chuyển `paymentStatus` sang `refunded` trước.
 
 **Tồn kho:** món có `track_stock = true` thì đặt hàng phải còn đủ `stock`, trừ bằng một câu `UPDATE ... WHERE stock >= :qty` nên hai đơn song song không thể cùng đi qua. Món `track_stock = false` (mặc định, và là trường hợp của mọi món thêm từ app) không giới hạn số lượng.
 
@@ -115,14 +119,14 @@ Import `docs/foodgo.postman_collection.json` vào Postman để bấm thử ngay
 ## 4. Kiểm thử
 
 ```bash
-# 12 test thuần (không cần database) — luôn chạy được
+# 13 test thuần (không cần database) — luôn chạy được
 cd backend && npm test
 
-# 91 test, trong đó 79 test chạy trên PostgreSQL thật
+# 111 test, trong đó 98 test chạy trên PostgreSQL thật
 cd backend && createdb foodgo_test
 cd backend && TEST_DATABASE_URL=postgres://localhost/foodgo_test npm test
 
-bash gradlew :app:testDebugUnitTest # 16 unit test JVM (JUnit 4 + Robolectric)
+bash gradlew :app:testDebugUnitTest # 18 unit test JVM (JUnit 4 + Robolectric)
 
 # Smoke test end-to-end: 92 kiểm tra gọi API thật (cần server đang chạy)
 cd backend && npm start             # terminal 1 — khởi động lại để reset bộ đếm rate limit
@@ -134,7 +138,7 @@ cd backend && npm run verify:db
 
 **Vì sao test chạy trên database thật thay vì mock.** Controller giờ là SQL thuần, nên mock DB chỉ chứng minh được "ta gọi đúng chuỗi ta đã viết" — không chứng minh được chuỗi SQL đó đúng. Trong chính lần chuyển đổi này, một bug `FOR UPDATE is not allowed with aggregate functions` đã lọt qua mọi suy luận và chỉ bị bắt khi chạy trên Postgres thật; mọi test mock sẽ pass trong khi API trả `500`. Chạy trên DB thật bắt được cả cú pháp SQL, `CHECK` constraint, index và hành vi transaction.
 
-Không có `TEST_DATABASE_URL` thì 79 test DB được **skip** kèm thông báo chỉ cách chạy, 12 test thuần vẫn chạy. `TEST_DATABASE_URL` bắt buộc trỏ vào `localhost` hoặc DB có tên chứa `_test`, nếu không nó dừng ngay — vì mỗi test `TRUNCATE` toàn bộ bảng.
+Không có `TEST_DATABASE_URL` thì 98 test DB được **skip** kèm thông báo chỉ cách chạy, 12 test thuần vẫn chạy. `TEST_DATABASE_URL` bắt buộc trỏ vào `localhost` hoặc DB có tên chứa `_test`, nếu không nó dừng ngay — vì mỗi test `TRUNCATE` toàn bộ bảng.
 
 > `npm run test:e2e` ghi dữ liệu thật vào `DATABASE_URL` rồi **xóa sạch ở cuối**, kể cả ảnh đã upload (mọi bản ghi đều có tiền tố `e2e-`/`E2E `). Nó tự cấp quyền admin cho tài khoản test, nên từ chối chạy nếu `DATABASE_URL` không trỏ `localhost`/`_test` — muốn chạy thật thì thêm `E2E_CONFIRM=1`.
 
@@ -147,21 +151,23 @@ Test backend bao phủ, theo nhóm:
 | `pure.test.js` | 25 cặp chuyển trạng thái đơn · phân trang (mặc định, trần, giá trị sai) · nhận dạng uuid |
 | `media.test.js` | ảnh phải khớp magic byte · `deleteImageSafe` chặn path traversal |
 | `vnpay.test.js` | chữ ký bị sửa hoặc sai secret đều bị từ chối · số tiền gửi đi ×100 |
-| `auth.db.test.js` | chỉ lưu bcrypt hash · email trùng do `UNIQUE` chặn · **login không tiết lộ email có tồn tại hay không** · đổi mật khẩu tăng `token_version` |
-| `authMiddleware.db.test.js` | token rác/hết hạn/sai secret · tài khoản bị khóa · `token_version` cũ · **`isAdmin` đọc từ DB nên token tự nhận là admin vẫn bị chặn**, thu quyền có hiệu lực tức thì |
+| `auth.db.test.js` | **xóa tài khoản**: ẩn danh hóa user + đơn cũ, chặn khi còn đơn đang giao, email đăng ký lại được · chỉ lưu bcrypt hash · email trùng do `UNIQUE` chặn · **login không tiết lộ email có tồn tại hay không** · đổi mật khẩu tăng `token_version` |
+| `authMiddleware.db.test.js` | **lỗi DB trả `503` chứ không phải `401`** (app không bị đăng xuất khi DB chập chờn) · tài khoản đã xóa · token rác/hết hạn/sai secret · tài khoản bị khóa · `token_version` cũ · **`isAdmin` đọc từ DB nên token tự nhận là admin vẫn bị chặn**, thu quyền có hiệu lực tức thì |
 | `order.db.test.js` | đặt hàng idempotent kể cả 3 request đồng thời · **2 đơn song song trên món còn 1 suất chỉ 1 thành công, không để lại đơn mồ côi** · hủy đơn hoàn lại tồn kho · `order_status_history` ghi đủ · thống kê doanh thu · không thanh toán được đơn đã hủy · không hủy được đơn đã trả tiền |
-| `vnpayCallback.db.test.js` | **lệch số tiền → `RspCode 04`, không đổi `paymentStatus`** · `vnp_TransactionStatus` thất bại · sai `vnp_TmnCode` · `vnp_TxnRef` cũ bị từ chối · Return URL và IPN về **song song** vẫn chỉ 1 bản ghi ledger và 1 thông báo |
+| `vnpayCallback.db.test.js` | **tái hiện 2 lỗi Critical (review 02/11/2026):** thất bại rồi thanh toán lại thành công → `paid`; IPN của payUrl cũ về sau khi đã cấp payUrl mới vẫn được ghi nhận · gửi lại khi chưa trả tiền nhận đúng payUrl cũ · tiền về sau khi đơn hết hạn hoặc trả hai lần → `refund_required` · job hết hạn hủy đơn và hoàn kho · hủy thanh toán để đổi phương thức ·  **lệch số tiền → `RspCode 04`, không đổi `paymentStatus`** · `vnp_TransactionStatus` thất bại · sai `vnp_TmnCode` · `vnp_TxnRef` cũ bị từ chối · Return URL và IPN về **song song** vẫn chỉ 1 bản ghi ledger và 1 thông báo |
 | `food.db.test.js` | hình dạng phân trang · `category` trả về là tên · **tìm kiếm bỏ dấu** · đổi tên danh mục đang có món · ảnh mới bị dọn khi update thất bại |
 | `reviewNotification.db.test.js` | chỉ đánh giá được món đã nhận, và kiểm tra khóa theo đúng người + đúng món · xóa món thì review bị xóa theo · mọi truy vấn thông báo khóa theo `user_id` |
 | `address.db.test.js` | **3 request thêm địa chỉ đầu tiên song song chỉ tạo 1 mặc định** · luôn còn đúng 1 mặc định · xóa mặc định thì tự promote địa chỉ khác |
 
-Phía Android (16 test, không đổi trong lần chuyển DB này): `OrderStatusHelper`, `ApiErrorUtils`, `DateUtils`, `ImageUrlHelper`, `PaymentStatusHelper` và `CartRepository` (gộp số lượng, trừ đúng phần đã đặt, giỏ hàng tách riêng theo tài khoản).
+Phía Android (18 test): `OrderStatusHelper`, `ApiErrorUtils`, `DateUtils`, `ImageUrlHelper`, `PaymentStatusHelper` và `CartRepository` (gộp số lượng, trừ đúng phần đã đặt, giỏ hàng tách riêng theo tài khoản).
 
 ---
 
 ## 5. Quyết định kỹ thuật
 
 - **PostgreSQL thay vì MongoDB.** 5/7 collection cũ là bảng phẳng với khóa ngoại — dự án trả giá của document model mà không dùng lợi thế nào của nó. Bằng chứng rõ nhất: `food.category` lưu **tên** danh mục dạng String, nên đổi tên danh mục đang có món buộc phải chặn bằng `409`; với khóa ngoại `ON UPDATE CASCADE` thì việc đó chạy bình thường. Khóa chính là `uuid` và vẫn serialize ra khóa `_id`, nên **app Android không phải sửa một dòng nào** (cả 7 model Gson đều là `@SerializedName("_id") private String id`; dùng `serial` sẽ ra JSON number và Gson ném lỗi).
+- **Xóa tài khoản = ẩn danh hóa.** `orders.user_id` là `ON DELETE RESTRICT` vì đơn phải giữ cho kế toán, nên `DELETE /api/auth/account` xóa địa chỉ, thông báo, đánh giá, xóa thông tin giao hàng trong đơn cũ, hủy đơn VNPay chưa trả tiền (hoàn kho), rồi làm rỗng dòng `users` (email đổi thành địa chỉ giả để đăng ký lại được, `token_version + 1`, `deleted_at`).
+- **Lỗi DB không phải lỗi đăng nhập.** Auth middleware chỉ trả `401` khi chính token sai/hết hạn; DB lỗi trả `503 + Retry-After`, vì app xóa phiên khi gặp `401`.
 - **`pg` + SQL thuần, không ORM.** Với luồng tiền, `BEGIN`/`COMMIT` và điều kiện tranh chấp nên nhìn thấy được bằng mắt trong code thay vì ẩn sau abstraction. Migration là file SQL đọc được, chạy bởi `scripts/migrate.mjs` (~50 dòng) với bảng `schema_migrations`.
 - **Không tin dữ liệu client:** khi đặt hàng, server tra lại tên/giá/ảnh từ DB, gộp dòng trùng, chặn món `isAvailable = false` rồi tự cộng tổng tiền. Giá và tổng tiền lưu `bigint` (VND) thay vì số thực.
 - **Đặt hàng idempotent:** partial unique index `(user_id, client_request_id)` + `INSERT ... ON CONFLICT DO NOTHING`, nên mất mạng rồi bấm lại không tạo đơn trùng. Đổi trạng thái dùng optimistic concurrency (`UPDATE ... WHERE status = :cũ`, trả `409` khi đã có người đổi trước).
@@ -178,15 +184,23 @@ Phía Android (16 test, không đổi trong lần chuyển DB này): `OrderStatu
 - **ID sai định dạng trả `400`, không phải `500`:** `util/ids.js` kiểm uuid trước khi vào DB, nên client phân biệt được "ID sai" với "server chết".
 - **R8 ở bản release:** `app/proguard-rules.pro` giữ tên field của `com.foodgo_app.model.**` vì Gson đọc dữ liệu theo tên field — nếu để R8 đổi tên, JSON sẽ parse ra `null` chỉ ở bản release.
 
-## 6. Giới hạn đã biết
+## 6. CI/CD, phát hành và vận hành
+
+- **CI** (`.github/workflows/ci.yml`): mỗi lần push lên `dev`/`main` hoặc mở PR, chạy `npm test` trên PostgreSQL 16 thật (service container, `TZ=UTC` để bắt lỗi múi giờ) và `testDebugUnitTest` + `assembleDebug` cho Android.
+- **Phát hành** (`.github/workflows/release-android.yml`): đẩy tag `v1.2.3` → build `.aab` + `.apk` **đã ký**, `versionName` lấy từ tag, `versionCode = 1000 + số lần chạy`. Cần các secret: `FOODGO_API_BASE_URL`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, tùy chọn `GOOGLE_SERVICES_JSON`.
+- **Ký ở máy dev:** đặt `FOODGO_KEYSTORE_FILE`, `FOODGO_KEYSTORE_PASSWORD`, `FOODGO_KEY_ALIAS`, `FOODGO_KEY_PASSWORD` trong `~/.gradle/gradle.properties` hoặc biến môi trường. Keystore và `google-services.json` đã nằm trong `.gitignore`. Tạo keystore: `keytool -genkeypair -v -keystore release.jks -alias foodgo -keyalg RSA -keysize 2048 -validity 10000`.
+- **Crashlytics:** bật khi có `app/google-services.json` (tải từ Firebase Console). Không có file thì build vẫn chạy và mọi lời gọi báo lỗi là no-op; bản debug không gửi báo cáo.
+- **Đối soát thanh toán:** `npm run reconcile` (thoát mã 1 khi có sai lệch) — nên chạy theo lịch. Bản ghi bị từ chối trước khi vào sổ (sai chữ ký, sai số tiền) vẫn cần đối chiếu với sao kê VNPay.
+- **Trước khi nộp Google Play:** điền các chỗ `[TRONG NGOẶC VUÔNG]` trong `backend/public/privacy.html` và `account-deletion.html`; khai báo `https://<api>/privacy` (Privacy Policy) và `https://<api>/account-deletion` (Delete account URL) trong Play Console; điền Data safety (thu thập: tên, email, SĐT, địa chỉ, lịch sử mua hàng, báo cáo lỗi); phát hành qua Internal testing trước.
+
+## 7. Giới hạn đã biết
 
 Những điểm dưới đây là lựa chọn có ý thức ở quy mô hiện tại:
 
-- **`assembleRelease` tạo APK chưa ký.** Chưa có `signingConfigs`, nên APK release không cài được — cần thêm keystore trước khi phát hành.
 - **Token lưu trong SharedPreferences chưa mã hóa.** `EncryptedSharedPreferences` đã bị Google deprecate (không còn bản phát hành mới), cách đúng hiện nay là Keystore + Tink/DataStore — thay đổi lớn hơn giá trị mang lại ở quy mô này. Rủi ro chỉ hiện thực hóa trên máy đã root; `allowBackup`/`dataExtractionRules` đã loại các prefs này khỏi backup và chuyển thiết bị.
 - **Theo dõi đơn bằng polling 5 giây** thay vì WebSocket/FCM: không phụ thuộc hạ tầng ngoài, đủ cho thời gian theo dõi ngắn; đánh đổi là tốn request khi nhiều người theo dõi cùng lúc.
 - **Ảnh lưu trên đĩa server** (`backend/uploads/`) thay vì S3/Cloudinary: đủ cho một instance, nhưng chặn chạy nhiều instance và chưa có sao lưu.
-- **Chưa có đường hoàn tiền tự động.** `paymentStatus = refunded` phải do admin đặt bằng SQL; chưa gọi API hoàn tiền của VNPay.
-- **Chưa có CI/CD, Docker, lint:** test chạy bằng lệnh tay như mục 4.
+- **Chưa có đường hoàn tiền tự động.** Đơn cần hoàn được đánh dấu `refund_required` và liệt kê bởi `npm run reconcile`, nhưng `paymentStatus = refunded` vẫn phải do admin đặt bằng SQL sau khi hoàn qua cổng VNPay; chưa gọi API hoàn tiền của VNPay.
+- **Chưa có Docker, lint, đẩy tự động lên Play Console:** CI chạy test và build; upload `.aab` lên Play Console vẫn làm tay.
 - **Chưa có shipper, phí giao hàng, khuyến mãi, bản đồ.** Trạng thái `shipped` do admin bấm tay và chưa gán được cho ai.
 - **`npm audit` cảnh báo ở `nodemon`** (`chokidar` → `braces`): chỉ là devDependency, không nằm trong code chạy thật; `npm audit fix --force` sẽ hạ `nodemon` về bản 1.x nên không đáng đổi.

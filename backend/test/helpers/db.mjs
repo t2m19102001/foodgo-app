@@ -39,21 +39,37 @@ export const getDb = async () => {
   return db;
 };
 
+// Chay migration theo bang schema_migrations giong scripts/migrate.mjs, de DB
+// test da tao tu truoc van nhan migration moi (truoc day chi kiem "da co bang
+// orders chua" nen migration 003 tro di khong bao gio chay tren DB test cu).
 export const migrate = async () => {
   const { query } = await getDb();
+  await query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
+  const { rows } = await query("SELECT filename FROM schema_migrations");
+  const applied = new Set(rows.map((row) => row.filename));
+  // DB test tao bang code cu: da co bang orders nhung chua ghi so migration
+  if (applied.size === 0) {
+    const legacy = await query(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema = 'public' AND table_name = 'orders') AS ready`);
+    if (legacy.rows[0].ready) {
+      for (const file of ["001_init.sql", "002_track_stock.sql"]) {
+        await query("INSERT INTO schema_migrations (filename) VALUES ($1)", [file]);
+        applied.add(file);
+      }
+    }
+  }
   const files = (await readdir(migrationsDir)).filter((f) => f.endsWith(".sql")).sort();
-  const applied = await query(
-    `SELECT EXISTS (SELECT 1 FROM information_schema.tables
-                    WHERE table_schema = 'public' AND table_name = 'orders') AS ready`
-  );
-  if (applied.rows[0].ready) return;
   for (const file of files) {
+    if (applied.has(file)) continue;
     await query(await readFile(join(migrationsDir, file), "utf8"));
+    await query("INSERT INTO schema_migrations (filename) VALUES ($1)", [file]);
   }
 };
 
 const TABLES = [
-  "order_status_history", "payments", "order_items", "orders",
+  "order_status_history", "payments", "payment_attempts", "order_items", "orders",
   "reviews", "notifications", "addresses", "foods", "categories", "users",
 ];
 

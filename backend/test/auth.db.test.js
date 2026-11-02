@@ -137,3 +137,86 @@ test("a wrong old password leaves the stored password and tokenVersion untouched
   assert.equal(after.rows[0].password, hash, "mat khau khong duoc doi");
   assert.equal(after.rows[0].token_version, 3, "token_version khong duoc tang");
 });
+
+// ---------------------------------------------------------------------------
+// Xoa tai khoan (an danh hoa)
+
+const makeAccount = async (email = "xoa@test.local") => {
+  const hash = await bcrypt.hash("matkhau123", 10);
+  const { rows } = await db.query(
+    `INSERT INTO users (name, email, password, phone, address, token_version)
+     VALUES ('Nguyen Van A', $1, $2, '0901234567', '1 Le Loi', 0) RETURNING id`, [email, hash]);
+  return rows[0].id;
+};
+
+const makeOrderFor = async (userId, { status, paymentMethod = "cod", paymentStatus = "unpaid" }) => {
+  const { rows } = await db.query(
+    `INSERT INTO orders (user_id, amount, ship_full_name, ship_phone, ship_address,
+                         payment_method, payment_status, status)
+     VALUES ($1, 65000, 'Nguyen Van A', '0901234567', '1 Le Loi', $2, $3, $4) RETURNING id`,
+    [userId, paymentMethod, paymentStatus, status]);
+  return rows[0].id;
+};
+
+test("xoa tai khoan: an danh hoa user + don cu, xoa dia chi/thong bao, email dang ky lai duoc", { skip }, async () => {
+  const userId = await makeAccount();
+  const orderId = await makeOrderFor(userId, { status: "delivered" });
+  await db.query(
+    "INSERT INTO addresses (user_id, full_name, phone, address, is_default) VALUES ($1, 'A', '09', 'HN', true)",
+    [userId]);
+  await db.query("INSERT INTO notifications (user_id, title, message) VALUES ($1, 't', 'm')", [userId]);
+
+  const response = makeResponse();
+  await auth.deleteAccount({ userId, body: { password: "matkhau123" } }, response);
+  assert.equal(response.statusCode, 200, JSON.stringify(response.body));
+
+  const user = (await db.query("SELECT * FROM users WHERE id = $1", [userId])).rows[0];
+  assert.ok(user.deleted_at);
+  assert.equal(user.is_active, false);
+  assert.equal(user.phone, "");
+  assert.equal(user.address, "");
+  assert.notEqual(user.email, "xoa@test.local");
+  assert.equal(user.token_version, 1, "token cu het hieu luc ngay");
+  assert.equal(await bcrypt.compare("matkhau123", user.password), false);
+
+  const order = (await db.query("SELECT * FROM orders WHERE id = $1", [orderId])).rows[0];
+  assert.ok(order, "don hang van giu cho ke toan");
+  assert.equal(order.ship_phone, "");
+  assert.equal(order.ship_address, "");
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM addresses WHERE user_id = $1", [userId])).rows[0].n, 0);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM notifications WHERE user_id = $1", [userId])).rows[0].n, 0);
+
+  const login = makeResponse();
+  await auth.loginUser({ body: { email: "xoa@test.local", password: "matkhau123" } }, login);
+  assert.equal(login.statusCode, 401, "khong dang nhap lai duoc tai khoan da xoa");
+
+  const register = makeResponse();
+  await auth.registerUser({ body: { name: "Moi", email: "xoa@test.local", password: "matkhau123" } }, register);
+  assert.equal(register.statusCode, 201, "email da duoc giai phong");
+});
+
+test("xoa tai khoan: sai mat khau -> 400, khong doi gi", { skip }, async () => {
+  const userId = await makeAccount();
+  const response = makeResponse();
+  await auth.deleteAccount({ userId, body: { password: "doan-sai" } }, response);
+  assert.equal(response.statusCode, 400);
+  const user = (await db.query("SELECT deleted_at, email FROM users WHERE id = $1", [userId])).rows[0];
+  assert.equal(user.deleted_at, null);
+  assert.equal(user.email, "xoa@test.local");
+});
+
+test("xoa tai khoan: con don dang giao -> 409; don VNPay chua tra tien thi duoc huy", { skip }, async () => {
+  const blocked = await makeAccount("dangiao@test.local");
+  await makeOrderFor(blocked, { status: "shipped" });
+  const refused = makeResponse();
+  await auth.deleteAccount({ userId: blocked, body: { password: "matkhau123" } }, refused);
+  assert.equal(refused.statusCode, 409);
+  assert.equal((await db.query("SELECT deleted_at FROM users WHERE id = $1", [blocked])).rows[0].deleted_at, null);
+
+  const userId = await makeAccount("vnpay@test.local");
+  const pendingVnpay = await makeOrderFor(userId, { status: "pending", paymentMethod: "vnpay" });
+  const response = makeResponse();
+  await auth.deleteAccount({ userId, body: { password: "matkhau123" } }, response);
+  assert.equal(response.statusCode, 200, JSON.stringify(response.body));
+  assert.equal((await db.query("SELECT status FROM orders WHERE id = $1", [pendingVnpay])).rows[0].status, "cancelled");
+});

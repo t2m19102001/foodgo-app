@@ -11,6 +11,12 @@ captures/
 *.apk
 *.aab
 
+# Ky ban phat hanh va cau hinh Firebase: chi nam o may dev / CI secret
+*.jks
+*.keystore
+keystore.properties
+app/google-services.json
+
 # macOS
 .DS_Store
 

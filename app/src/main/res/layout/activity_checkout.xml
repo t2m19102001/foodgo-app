@@ -321,12 +321,48 @@
                 android:textSize="22sp" />
         </LinearLayout>
 
+        <!-- Trang thai thanh toan VNPay dang cho (an khi khong co don cho) -->
+        <TextView
+            android:id="@+id/text_pending_status"
+            style="@style/Text.App.BodySecondary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:visibility="gone" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_place_order"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
             android:text="Đặt hàng" />
+
+        <LinearLayout
+            android:id="@+id/layout_pending_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_resume_payment"
+                style="@style/Widget.App.Button.Outlined"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:text="Mở lại trang thanh toán"
+                android:visibility="gone" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_cancel_pending"
+                style="@style/Widget.App.Button.Danger"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Hủy / đổi phương thức" />
+        </LinearLayout>
 
         <ProgressBar
             android:id="@+id/progress_bar"

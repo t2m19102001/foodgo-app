@@ -10,6 +10,7 @@ import com.foodgo_app.model.response.CancelOrderRequest;
 import com.foodgo_app.model.response.CategoryDetailResponse;
 import com.foodgo_app.model.response.CategoryListResponse;
 import com.foodgo_app.model.response.ChangePasswordRequest;
+import com.foodgo_app.model.response.DeleteAccountRequest;
 import com.foodgo_app.model.response.EditReviewRequest;
 import com.foodgo_app.model.response.FoodDetailResponse;
 import com.foodgo_app.model.response.FoodListResponse;
@@ -33,6 +34,7 @@ import retrofit2.Call;
 import retrofit2.http.Body;
 import retrofit2.http.DELETE;
 import retrofit2.http.GET;
+import retrofit2.http.HTTP;
 import retrofit2.http.Multipart;
 import retrofit2.http.PUT;
 import retrofit2.http.POST;
@@ -63,6 +65,10 @@ public interface ApiService {
 
     @PUT("api/auth/change-password")
     Call<SimpleResponse> changePassword(@Body ChangePasswordRequest body);
+
+    // DELETE co body (mat khau xac nhan) - @DELETE cua Retrofit khong cho gui body
+    @HTTP(method = "DELETE", path = "api/auth/account", hasBody = true)
+    Call<SimpleResponse> deleteAccount(@Body DeleteAccountRequest body);
 
     // ===== Food =====
     @GET("api/food")
@@ -129,6 +135,10 @@ public interface ApiService {
 
     @GET("api/order/request/{clientRequestId}")
     Call<OrderDetailResponse> getOrderByRequestId(@Path("clientRequestId") String clientRequestId);
+
+    // Bo thanh toan VNPay dang cho de doi phuong thuc / doi gio hang
+    @POST("api/order/request/{clientRequestId}/abandon")
+    Call<OrderDetailResponse> abandonPendingPayment(@Path("clientRequestId") String clientRequestId);
 
     // status = null thi Retrofit tu bo query param nay (lay tat ca trang thai)
     @GET("api/order/my")

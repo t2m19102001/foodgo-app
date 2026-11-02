@@ -15,6 +15,7 @@ import orderRouter from "./routers/orderRouter.js";
 import reviewRouter from "./routers/reviewRouter.js";
 import notificationRouter from "./routers/notificationRouter.js";
 import addressRouter from "./routers/addressRouter.js";
+import { expireStaleVnpayOrders } from "./controllers/orderController.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,6 +71,10 @@ if (!fs.existsSync(uploadsDir)) {
 }
 app.use("/uploads", express.static(uploadsDir));
 
+// Trang cong khai bat buoc cho Google Play: /privacy (Privacy Policy) va
+// /account-deletion (URL yeu cau xoa tai khoan khai bao trong Play Console)
+app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"], index: false }));
+
 await connectDB();
 
 app.use("/api/auth", authRouter);
@@ -107,3 +112,16 @@ app.use((err, req, res, next) => {
 app.listen(port, () => {
   logger.info(`Server is running on http://localhost:${port}`);
 });
+
+// Huy don VNPay qua han thanh toan va hoan ton kho. SKIP LOCKED trong
+// expireStaleVnpayOrders nen chay nhieu instance cung luc van an toan.
+const EXPIRY_INTERVAL_MS = 60 * 1000;
+const expiryTimer = setInterval(async () => {
+  try {
+    const expired = await expireStaleVnpayOrders();
+    if (expired > 0) logger.info(`Da huy ${expired} don VNPay het han thanh toan`);
+  } catch (error) {
+    logger.error("Expire VNPay orders error:", error.message);
+  }
+}, EXPIRY_INTERVAL_MS);
+expiryTimer.unref();

@@ -8,6 +8,7 @@ import com.google.gson.reflect.TypeToken;
 import com.foodgo_app.model.CartItem;
 import com.foodgo_app.model.Food;
 import com.foodgo_app.model.OrderItem;
+import com.foodgo_app.util.CrashReporter;
 import com.foodgo_app.util.SessionManager;
 
 import java.lang.reflect.Type;
@@ -41,8 +42,16 @@ public class CartRepository {
             return new ArrayList<>();
         }
         Type type = new TypeToken<ArrayList<CartItem>>() {}.getType();
-        List<CartItem> items = gson.fromJson(json, type);
-        return items != null ? items : new ArrayList<>();
+        try {
+            List<CartItem> items = gson.fromJson(json, type);
+            return items != null ? items : new ArrayList<>();
+        } catch (RuntimeException e) {
+            // Du lieu gio hong (vi du doi cau truc model giua hai phien ban): bo
+            // gio cu thay vi crash moi lan mo app, va bao ve Crashlytics
+            CrashReporter.recordNonFatal(e);
+            clearCart();
+            return new ArrayList<>();
+        }
     }
 
     public void addToCart(Food food) {

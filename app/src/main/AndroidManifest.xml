@@ -68,6 +68,10 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".ui.profile.DeleteAccountActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ui.notification.NotificationActivity"
             android:exported="false" />
         <activity

@@ -6,6 +6,7 @@ import com.foodgo_app.api.ApiClient;
 import com.foodgo_app.api.ApiService;
 import com.foodgo_app.model.response.AuthResponse;
 import com.foodgo_app.model.response.ChangePasswordRequest;
+import com.foodgo_app.model.response.DeleteAccountRequest;
 import com.foodgo_app.model.response.LoginRequest;
 import com.foodgo_app.model.response.ProfileResponse;
 import com.foodgo_app.model.response.RegisterRequest;
@@ -42,5 +43,9 @@ public class AuthRepository {
 
     public Call<SimpleResponse> changePassword(String oldPassword, String newPassword) {
         return apiService.changePassword(new ChangePasswordRequest(oldPassword, newPassword));
+    }
+
+    public Call<SimpleResponse> deleteAccount(String password) {
+        return apiService.deleteAccount(new DeleteAccountRequest(password));
     }
 }

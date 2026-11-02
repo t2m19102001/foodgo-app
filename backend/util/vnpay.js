@@ -17,16 +17,30 @@ const sign = (params, hashSecret) => {
   return crypto.createHmac("sha512", hashSecret).update(Buffer.from(signData, "utf-8")).digest("hex");
 };
 
-// amount: so tien VND (chua nhan 100), txnRef: ma giao dich duy nhat, orderInfo: noi dung thanh toan
-const pad2 = (n) => String(n).padStart(2, "0");
+// VNPay doc vnp_CreateDate / vnp_ExpireDate theo gio Viet Nam (GMT+7). Truoc
+// day dung gio local cua may chu: server chay UTC (Render, Neon, Docker) se
+// lech 7 tieng va cong thanh toan tu choi hoac het han sai.
+const vnTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+  hourCycle: "h23",
+});
 
-// Dinh dang yyyyMMddHHmmss theo gio local, dung chuan VNPay yeu cau
-const formatVnpDate = (date) =>
-  `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(date.getDate())}` +
-  `${pad2(date.getHours())}${pad2(date.getMinutes())}${pad2(date.getSeconds())}`;
+// Dinh dang yyyyMMddHHmmss theo gio Viet Nam, dung chuan VNPay yeu cau
+export const formatVnpDate = (date) => {
+  const parts = Object.fromEntries(
+    vnTimeFormatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}${parts.month}${parts.day}${parts.hour}${parts.minute}${parts.second}`;
+};
 
-export const buildPaymentUrl = ({ txnRef, amount, orderInfo, ipAddr }) => {
-  const createDate = formatVnpDate(new Date());
+// amount: so tien VND (chua nhan 100), txnRef: ma giao dich duy nhat, orderInfo: noi dung thanh toan.
+// createdAt/expiresAt: Date; expiresAt la han VNPay chap nhan thanh toan cho txnRef nay.
+export const buildPaymentUrl = ({
+  txnRef, amount, orderInfo, ipAddr, createdAt = new Date(), expiresAt,
+}) => {
+  const createDate = formatVnpDate(createdAt);
+  const expireDate = formatVnpDate(expiresAt || new Date(createdAt.getTime() + 15 * 60 * 1000));
 
   const params = {
     vnp_Version: "2.1.0",
@@ -41,6 +55,7 @@ export const buildPaymentUrl = ({ txnRef, amount, orderInfo, ipAddr }) => {
     vnp_ReturnUrl: process.env.VNPAY_RETURN_URL,
     vnp_IpAddr: ipAddr || "127.0.0.1",
     vnp_CreateDate: createDate,
+    vnp_ExpireDate: expireDate,
   };
 
   const secureHash = sign(params, process.env.VNPAY_HASH_SECRET);

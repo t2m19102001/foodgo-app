@@ -6,6 +6,7 @@ import {
   getProfile,
   updateProfile,
   changePassword,
+  deleteAccount,
 } from "../controllers/authController.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { uploadMiddleware, handleUploadError, validateUploadedImage } from "../middleware/upload.js";
@@ -53,5 +54,7 @@ authRouter.put(
   updateProfile
 );
 authRouter.put("/change-password", changePasswordLimiter, authMiddleware, changePassword);
+// Can mat khau de xac nhan nen dung chung bo dem thu sai voi doi mat khau
+authRouter.delete("/account", changePasswordLimiter, authMiddleware, deleteAccount);
 
 export default authRouter;
