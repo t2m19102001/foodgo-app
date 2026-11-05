@@ -1,10 +1,14 @@
 import { query } from "../db/index.js";
 import { mapReview } from "../db/mappers.js";
-import { isUuid } from "../util/ids.js";
+import { badRequest } from "../util/httpError.js";
+import { invalidUuid, invalidOptionalText, invalidInt, firstProblem } from "../util/validate.js";
 import logger from "../util/logger.js";
 
-const isValidRating = (rating) => Number.isInteger(Number(rating))
-  && Number(rating) >= 1 && Number(rating) <= 5;
+// Gom o mot cho de bon endpoint duoi day khong con moi cho mot cach kiem khac
+const invalidRating = (rating) =>
+  invalidInt(rating, { min: 1, max: 5, message: "Số sao phải từ 1 đến 5" });
+const invalidComment = (comment) =>
+  invalidOptionalText(comment, { label: "Nhận xét", max: 500 });
 
 const REVIEW_SELECT = `
   SELECT r.id, r.user_id, r.food_id, r.rating, r.comment, r.created_at, r.updated_at,
@@ -16,17 +20,14 @@ export const addReview = async (req, res) => {
     const { foodId, rating, comment } = req.body;
 
     if (!foodId || !rating) {
-      return res.status(400).json({ success: false, message: "Thiếu thông tin đánh giá" });
+      return badRequest(res, "Thiếu thông tin đánh giá");
     }
-    if (!isUuid(foodId)) {
-      return res.status(400).json({ success: false, message: "Món ăn không hợp lệ" });
-    }
-    if (!isValidRating(rating)) {
-      return res.status(400).json({ success: false, message: "Số sao phải từ 1 đến 5" });
-    }
-    if (comment !== undefined && (typeof comment !== "string" || comment.length > 500)) {
-      return res.status(400).json({ success: false, message: "Nhận xét không hợp lệ" });
-    }
+    const problem = firstProblem(
+      invalidUuid(foodId, "Món ăn"),
+      invalidRating(rating),
+      invalidComment(comment),
+    );
+    if (problem) return badRequest(res, problem);
 
     // Chi cho danh gia mon da thuc su nhan duoc trong mot don da giao. Dieu kien
     // user_id nam ngay trong query nen khong the xem/danh gia nho don nguoi khac.
@@ -52,7 +53,7 @@ export const addReview = async (req, res) => {
       [req.userId, foodId, Number(rating), comment || ""]
     );
     if (inserted.rowCount === 0) {
-      return res.status(400).json({ success: false, message: "Bạn đã đánh giá món này rồi" });
+      return badRequest(res, "Bạn đã đánh giá món này rồi");
     }
 
     const { rows } = await query(`${REVIEW_SELECT} WHERE r.id = $1`, [inserted.rows[0].id]);
@@ -69,9 +70,8 @@ export const addReview = async (req, res) => {
 
 export const getFoodReviews = async (req, res) => {
   try {
-    if (!isUuid(req.params.foodId)) {
-      return res.status(400).json({ success: false, message: "Món ăn không hợp lệ" });
-    }
+    const problem = invalidUuid(req.params.foodId, "Món ăn");
+    if (problem) return badRequest(res, problem);
     // Co LIMIT: ban Mongo tra ve toan bo review cua mot mon khong gioi han, mot
     // mon nhieu danh gia la mot response rat lon.
     const { rows } = await query(
@@ -89,15 +89,14 @@ export const updateReview = async (req, res) => {
   try {
     const { rating, comment } = req.body;
 
-    if (!isUuid(req.params.id)) {
-      return res.status(400).json({ success: false, message: "Mã đánh giá không hợp lệ" });
-    }
-    if (rating !== undefined && !isValidRating(rating)) {
-      return res.status(400).json({ success: false, message: "Số sao phải từ 1 đến 5" });
-    }
-    if (comment !== undefined && (typeof comment !== "string" || comment.length > 500)) {
-      return res.status(400).json({ success: false, message: "Nhận xét không hợp lệ" });
-    }
+    // Khac addReview: ca rating va comment deu TUY CHON o day - COALESCE ben
+    // duoi giu lai gia tri cu cho truong khong gui len.
+    const problem = firstProblem(
+      invalidUuid(req.params.id, "Mã đánh giá"),
+      rating === undefined ? null : invalidRating(rating),
+      invalidComment(comment),
+    );
+    if (problem) return badRequest(res, problem);
 
     const owner = await query("SELECT user_id FROM reviews WHERE id = $1", [req.params.id]);
     if (owner.rowCount === 0) {
@@ -133,9 +132,9 @@ export const updateReview = async (req, res) => {
 
 export const deleteReview = async (req, res) => {
   try {
-    if (!isUuid(req.params.id)) {
-      return res.status(400).json({ success: false, message: "Mã đánh giá không hợp lệ" });
-    }
+    const problem = invalidUuid(req.params.id, "Mã đánh giá");
+    if (problem) return badRequest(res, problem);
+
     const owner = await query("SELECT user_id FROM reviews WHERE id = $1", [req.params.id]);
     if (owner.rowCount === 0) {
       return res.status(404).json({ success: false, message: "Không tìm thấy đánh giá" });

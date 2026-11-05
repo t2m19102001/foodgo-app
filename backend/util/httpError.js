@@ -12,6 +12,10 @@ export class HttpError extends Error {
   }
 }
 
+// Tra 400 kem thong diep tu util/validate.js. Gom lai mot cho de hinh dang
+// body loi ({ success, message }) chi duoc viet o mot noi.
+export const badRequest = (res, message) => res.status(400).json({ success: false, message });
+
 // Dung o cuoi moi catch cua controller: neu la loi nghiep vu thi tra dung ma,
 // con lai moi la 500 that.
 export const sendHttpError = (res, error, fallbackMessage, logFn) => {
@@ -22,4 +26,4 @@ export const sendHttpError = (res, error, fallbackMessage, logFn) => {
   return res.status(500).json({ success: false, message: fallbackMessage });
 };
 
-export default { HttpError, sendHttpError };
+export default { HttpError, badRequest, sendHttpError };

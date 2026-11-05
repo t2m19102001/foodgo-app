@@ -15,7 +15,8 @@ import {
 import { buildPaymentUrl, verifySignature } from "../util/vnpay.js";
 import { parseOrderPagination } from "../util/pagination.js";
 import { isUuid } from "../util/ids.js";
-import { HttpError, sendHttpError } from "../util/httpError.js";
+import { HttpError, badRequest, sendHttpError } from "../util/httpError.js";
+import { invalidUuid, invalidOptionalText, invalidInt, firstProblem } from "../util/validate.js";
 import logger from "../util/logger.js";
 
 const VALID_PAYMENT_METHODS = ["cod", "vnpay"];
@@ -28,8 +29,12 @@ const NEXT_STATUSES = {
   cancelled: [],
 };
 const CANCELLABLE_STATUSES = ["pending", "confirmed"];
-const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_ITEMS = 50;
+
+// clientRequestId do app sinh bang UUID.randomUUID(), cung dinh dang voi khoa
+// chinh - truoc day file nay giu mot ban copy cua UUID_PATTERN chi de kiem no.
+const invalidRequestId = (value) => invalidUuid(value, "Mã yêu cầu");
+const invalidOrderId = (value) => invalidUuid(value, "Mã đơn hàng");
 
 const positiveIntFromEnv = (name, fallback) => {
   const value = Number.parseInt(process.env[name] || "", 10);
@@ -71,17 +76,16 @@ export const placeOrder = async (req, res) => {
   try {
     const { items, address, clientRequestId, paymentMethod } = req.body || {};
 
-    if (typeof clientRequestId !== "string" || !REQUEST_ID_PATTERN.test(clientRequestId)) {
-      return res.status(400).json({ success: false, message: "Mã yêu cầu không hợp lệ" });
-    }
+    const requestIdProblem = invalidRequestId(clientRequestId);
+    if (requestIdProblem) return badRequest(res, requestIdProblem);
 
     const normalizedPaymentMethod = VALID_PAYMENT_METHODS.includes(paymentMethod) ? paymentMethod : "cod";
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, message: "Giỏ hàng trống" });
+      return badRequest(res, "Giỏ hàng trống");
     }
     if (items.length > MAX_ITEMS) {
-      return res.status(400).json({ success: false, message: "Giỏ hàng có quá nhiều món" });
+      return badRequest(res, "Giỏ hàng có quá nhiều món");
     }
     if (!address || typeof address !== "object" || Array.isArray(address)
         || ![address.fullName, address.phone, address.address].every((value) =>
@@ -89,24 +93,30 @@ export const placeOrder = async (req, res) => {
         || typeof (address.note ?? "") !== "string"
         || address.fullName.length > 100 || address.phone.length > 30
         || address.address.length > 300 || (address.note || "").length > 500) {
-      return res.status(400).json({ success: false, message: "Thiếu địa chỉ giao hàng" });
+      // Giu nguyen mot khoi dieu kien gop: ca bon truong deu tra ve CUNG mot
+      // thong diep, nen tach thanh bon loi goi invalidText chi de lap lai
+      // message bon lan - khong ro hon, lai de sai cho note (null la hop le).
+      return badRequest(res, "Thiếu địa chỉ giao hàng");
     }
 
     // Gop cac dong trung foodId va chuan hoa so luong truoc khi doi chieu voi DB
     const quantityByFoodId = new Map();
     for (const item of items) {
+      // Hai if roi nhau, KHONG gop vao firstProblem: item co the la null, va
+      // doc item.quantity truoc khi biet item hop le se nem TypeError -> 500.
       const foodId = item && item.foodId;
-      if (!isUuid(foodId)) {
-        return res.status(400).json({ success: false, message: "Món ăn không hợp lệ" });
-      }
+      const foodIdProblem = invalidUuid(foodId, "Món ăn");
+      if (foodIdProblem) return badRequest(res, foodIdProblem);
+
+      const quantityProblem = invalidInt(item.quantity, { label: "Số lượng món", min: 1, max: 100 });
+      if (quantityProblem) return badRequest(res, quantityProblem);
+
       const quantity = Number(item.quantity);
-      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
-        return res.status(400).json({ success: false, message: "Số lượng món không hợp lệ" });
-      }
       const key = String(foodId).toLowerCase();
+      // Gop cac dong trung cung mot mon: tran 100 tinh tren TONG, khong tung dong
       const totalQuantity = (quantityByFoodId.get(key) || 0) + quantity;
       if (totalQuantity > 100) {
-        return res.status(400).json({ success: false, message: "Số lượng món không hợp lệ" });
+        return badRequest(res, "Số lượng món không hợp lệ");
       }
       quantityByFoodId.set(key, totalQuantity);
     }
@@ -417,12 +427,12 @@ export const handleVnpayIpn = async (req, res) => {
 export const getMyOrders = async (req, res) => {
   try {
     const pagination = parseOrderPagination(req.query);
-    if (!pagination) return res.status(400).json({ success: false, message: "Trang hoặc giới hạn không hợp lệ" });
+    if (!pagination) return badRequest(res, "Trang hoặc giới hạn không hợp lệ");
     const { page, limit, skip } = pagination;
 
     const status = req.query.status;
     if (status && !VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
+      return badRequest(res, "Trạng thái không hợp lệ");
     }
 
     const { rows, total } = await listOrdersForUser({ userId: req.userId, status, limit, skip });
@@ -439,9 +449,9 @@ export const getMyOrders = async (req, res) => {
 
 export const getOrderById = async (req, res) => {
   try {
-    if (!isUuid(req.params.id)) {
-      return res.status(400).json({ success: false, message: "Mã đơn hàng không hợp lệ" });
-    }
+    const problem = invalidOrderId(req.params.id);
+    if (problem) return badRequest(res, problem);
+
     const order = await findOrderById(req.params.id);
 
     if (!order) {
@@ -468,9 +478,8 @@ export const getOrderById = async (req, res) => {
 // vo hieu. Gio app biet "dang cho VNPay" va khong POST lai.
 export const getOrderByRequestId = async (req, res) => {
   try {
-    if (!REQUEST_ID_PATTERN.test(req.params.clientRequestId)) {
-      return res.status(400).json({ success: false, message: "Mã yêu cầu không hợp lệ" });
-    }
+    const problem = invalidRequestId(req.params.clientRequestId);
+    if (problem) return badRequest(res, problem);
     const row = await findOrderByRequestId(req.userId, req.params.clientRequestId);
     if (!row) {
       return res.status(404).json({ success: false, message: "Chưa tìm thấy đơn hàng" });
@@ -509,9 +518,8 @@ export const getOrderByRequestId = async (req, res) => {
 //   409  don da ton tai that (COD hoac VNPay da tra tien) - tra kem don
 export const abandonPendingPayment = async (req, res) => {
   try {
-    if (!REQUEST_ID_PATTERN.test(req.params.clientRequestId)) {
-      return res.status(400).json({ success: false, message: "Mã yêu cầu không hợp lệ" });
-    }
+    const problem = invalidRequestId(req.params.clientRequestId);
+    if (problem) return badRequest(res, problem);
     const result = await withTransaction(async (client) => {
       const order = await lockOrderByRequestId(client, req.userId, req.params.clientRequestId);
       if (!order) throw new HttpError(404, "Không tìm thấy yêu cầu đặt hàng");
@@ -561,12 +569,11 @@ export const expireStaleVnpayOrders = async ({ graceMinutes = EXPIRY_GRACE_MINUT
 export const cancelOrder = async (req, res) => {
   try {
     const { reason } = req.body || {};
-    if (!isUuid(req.params.id)) {
-      return res.status(400).json({ success: false, message: "Mã đơn hàng không hợp lệ" });
-    }
-    if (reason !== undefined && (typeof reason !== "string" || reason.length > 500)) {
-      return res.status(400).json({ success: false, message: "Lý do hủy không hợp lệ" });
-    }
+    const problem = firstProblem(
+      invalidOrderId(req.params.id),
+      invalidOptionalText(reason, { label: "Lý do hủy", max: 500 }),
+    );
+    if (problem) return badRequest(res, problem);
 
     const result = await withTransaction(async (client) => {
       const order = await lockOrderById(client, req.params.id);
@@ -615,12 +622,12 @@ export const cancelOrder = async (req, res) => {
 export const listAllOrders = async (req, res) => {
   try {
     const pagination = parseOrderPagination(req.query);
-    if (!pagination) return res.status(400).json({ success: false, message: "Trang hoặc giới hạn không hợp lệ" });
+    if (!pagination) return badRequest(res, "Trang hoặc giới hạn không hợp lệ");
     const { page, limit, skip } = pagination;
 
     const status = req.query.status;
     if (status && !VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
+      return badRequest(res, "Trạng thái không hợp lệ");
     }
 
     const { rows, total } = await listOrdersForAdmin({ status, limit, skip });
@@ -668,11 +675,10 @@ export const updateOrderStatus = async (req, res) => {
     const { status } = req.body || {};
 
     if (!VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
+      return badRequest(res, "Trạng thái không hợp lệ");
     }
-    if (!isUuid(req.params.id)) {
-      return res.status(400).json({ success: false, message: "Mã đơn hàng không hợp lệ" });
-    }
+    const problem = invalidOrderId(req.params.id);
+    if (problem) return badRequest(res, problem);
 
     const result = await withTransaction(async (client) => {
       const order = await lockOrderById(client, req.params.id);
