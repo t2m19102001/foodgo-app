@@ -1,6 +1,11 @@
 import { createHash, randomInt } from "node:crypto";
-import { query, withTransaction } from "../db/index.js";
-import { mapOrder } from "../db/mappers.js";
+import { withTransaction } from "../db/index.js";
+import {
+  run, toOrder,
+  findOrderById, findOrderByRequestId,
+  listOrdersForUser, listOrdersForAdmin, readOrderStats,
+  findReusablePayUrl, findActivePayUrl,
+} from "../db/orders.js";
 import { buildPaymentUrl, verifySignature } from "../util/vnpay.js";
 import { parseOrderPagination } from "../util/pagination.js";
 import { isUuid } from "../util/ids.js";
@@ -17,15 +22,6 @@ const NEXT_STATUSES = {
   cancelled: [],
 };
 const CANCELLABLE_STATUSES = ["pending", "confirmed"];
-// Don VNPay chua thanh toan coi nhu CHUA TON TAI voi nguoi dung: khong hien
-// trong "Don hang cua toi", danh sach admin, thong ke, hay duoc tra ve boi
-// getOrderByRequestId. Day la cho sua bug "bam Dat hang la da thay don xuat
-// hien roi moi den man thanh toan" - server van giu cho don (xem placeOrder)
-// nhung client khong duoc biet no ton tai cho den khi thanh toan xong.
-//
-// Ngoai le: don co refund_required (tien VNPay ve sau khi don da het han/huy)
-// PHAI hien - admin can thay de hoan tien, khach can thay don cho hoan.
-const VISIBLE_ORDER_FILTER = "(payment_method <> 'vnpay' OR payment_status = 'paid' OR refund_required)";
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_ITEMS = 50;
 
@@ -59,9 +55,6 @@ const statusMessages = {
 // Ma don rut gon 8 ky tu cuoi, giong cach app hien thi "Don hang #xxxxxxxx"
 const shortCode = (orderId) => String(orderId).slice(-8);
 
-// client la pg client trong transaction, hoac undefined de dung pool
-const run = (client, text, params) => (client ? client.query(text, params) : query(text, params));
-
 const notify = async (client, userId, title, message) => {
   try {
     await run(client, "INSERT INTO notifications (user_id, title, message) VALUES ($1, $2, $3)",
@@ -82,18 +75,6 @@ const recordStatusChange = (client, orderId, fromStatus, toStatus, actorRole, ch
     `INSERT INTO order_status_history (order_id, from_status, to_status, actor_role, changed_by, note)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [orderId, fromStatus, toStatus, actorRole, changedBy, note]);
-
-const ORDER_SELECT = `
-  SELECT o.*,
-         COALESCE((
-           SELECT json_agg(json_build_object(
-                    'food_id', i.food_id, 'name', i.name, 'price', i.price,
-                    'quantity', i.quantity, 'image', i.image) ORDER BY i.id)
-           FROM order_items i WHERE i.order_id = o.id
-         ), '[]'::json) AS items
-  FROM orders o`;
-
-const toOrder = (row) => mapOrder(row, row.items || []);
 
 export const placeOrder = async (req, res) => {
   try {
@@ -164,11 +145,10 @@ export const placeOrder = async (req, res) => {
       );
 
       if (inserted.rowCount === 0) {
-        const existing = await client.query(
-          `${ORDER_SELECT} WHERE o.user_id = $1 AND o.client_request_id = $2`,
-          [req.userId, clientRequestId]
-        );
-        return { duplicate: true, order: existing.rows[0] };
+        return {
+          duplicate: true,
+          order: await findOrderByRequestId(req.userId, clientRequestId, client),
+        };
       }
 
       const orderId = inserted.rows[0].id;
@@ -232,8 +212,10 @@ export const placeOrder = async (req, res) => {
           + "Chúng tôi sẽ xác nhận trong thời gian sớm nhất.");
       }
 
-      const created = await client.query(`${ORDER_SELECT} WHERE o.id = $1`, [orderId]);
-      return { order: created.rows[0], paymentMethod: normalizedPaymentMethod };
+      return {
+        order: await findOrderById(orderId, client),
+        paymentMethod: normalizedPaymentMethod,
+      };
     });
 
     if (result.duplicate) {
@@ -286,13 +268,8 @@ export const placeOrder = async (req, res) => {
 //     ve tre (xem processVnpayResult).
 const getOrIssuePayUrl = async (order, ip) => {
   if (order.payment_status === "unpaid") {
-    const reusable = await query(
-      `SELECT pay_url FROM payment_attempts
-       WHERE order_id = $1 AND pay_url <> '' AND expires_at > now() + interval '2 minutes'
-       ORDER BY created_at DESC LIMIT 1`,
-      [order.id]
-    );
-    if (reusable.rows[0]) return reusable.rows[0].pay_url;
+    const reusable = await findReusablePayUrl(order.id);
+    if (reusable) return reusable;
   }
 
   const createdAt = new Date();
@@ -525,28 +502,15 @@ export const getMyOrders = async (req, res) => {
     if (!pagination) return res.status(400).json({ success: false, message: "Trang hoặc giới hạn không hợp lệ" });
     const { page, limit, skip } = pagination;
 
-    const params = [req.userId];
-    let where = `WHERE o.user_id = $1 AND ${VISIBLE_ORDER_FILTER}`;
-    if (req.query.status) {
-      if (!VALID_STATUSES.includes(req.query.status)) {
-        return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
-      }
-      params.push(req.query.status);
-      where += ` AND o.status = $${params.length}`;
+    const status = req.query.status;
+    if (status && !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
     }
 
-    const [list, count] = await Promise.all([
-      query(
-        `${ORDER_SELECT} ${where} ORDER BY o.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-        [...params, limit, skip]
-      ),
-      query(`SELECT count(*)::int AS total FROM orders o ${where}`, params),
-    ]);
-
-    const total = count.rows[0].total;
+    const { rows, total } = await listOrdersForUser({ userId: req.userId, status, limit, skip });
     res.json({
       success: true,
-      orders: list.rows.map(toOrder),
+      orders: rows.map(toOrder),
       pagination: { currentPage: page, totalPages: Math.ceil(total / limit), totalOrders: total },
     });
   } catch (error) {
@@ -560,8 +524,7 @@ export const getOrderById = async (req, res) => {
     if (!isUuid(req.params.id)) {
       return res.status(400).json({ success: false, message: "Mã đơn hàng không hợp lệ" });
     }
-    const { rows } = await query(`${ORDER_SELECT} WHERE o.id = $1`, [req.params.id]);
-    const order = rows[0];
+    const order = await findOrderById(req.params.id);
 
     if (!order) {
       return res.status(404).json({ success: false, message: "Không tìm thấy đơn hàng" });
@@ -590,32 +553,23 @@ export const getOrderByRequestId = async (req, res) => {
     if (!REQUEST_ID_PATTERN.test(req.params.clientRequestId)) {
       return res.status(400).json({ success: false, message: "Mã yêu cầu không hợp lệ" });
     }
-    const { rows } = await query(
-      `${ORDER_SELECT} WHERE o.user_id = $1 AND o.client_request_id = $2`,
-      [req.userId, req.params.clientRequestId]
-    );
-    if (rows.length === 0) {
+    const row = await findOrderByRequestId(req.userId, req.params.clientRequestId);
+    if (!row) {
       return res.status(404).json({ success: false, message: "Chưa tìm thấy đơn hàng" });
     }
-    const row = rows[0];
 
     if (row.payment_method === "vnpay" && row.payment_status !== "paid") {
       if (row.status === "cancelled") {
         return res.status(410).json({ success: false, message: EXPIRED_MESSAGE });
       }
       // Van KHONG tra orderId/order: voi khach, don chi ton tai khi da tra tien
-      const attempt = await query(
-        `SELECT pay_url FROM payment_attempts
-         WHERE order_id = $1 AND pay_url <> '' AND expires_at > now()
-         ORDER BY created_at DESC LIMIT 1`,
-        [row.id]
-      );
+      const activePayUrl = await findActivePayUrl(row.id);
       const failed = row.payment_status === "failed";
       return res.json({
         success: true,
         paymentPending: true,
         paymentStatus: row.payment_status,
-        payUrl: !failed && attempt.rows[0] ? attempt.rows[0].pay_url : undefined,
+        payUrl: !failed && activePayUrl ? activePayUrl : undefined,
         paymentExpiresAt: row.payment_expires_at,
         message: failed
           ? "Thanh toán VNPay chưa thành công. Bạn có thể thanh toán lại hoặc hủy để chọn phương thức khác."
@@ -658,8 +612,7 @@ export const abandonPendingPayment = async (req, res) => {
       if (!order) throw new HttpError(404, "Không tìm thấy yêu cầu đặt hàng");
 
       if (order.payment_method !== "vnpay" || order.payment_status === "paid") {
-        const fresh = await client.query(`${ORDER_SELECT} WHERE o.id = $1`, [order.id]);
-        return { exists: true, order: fresh.rows[0] };
+        return { exists: true, order: await findOrderById(order.id, client) };
       }
       if (order.status === "cancelled") return { cancelled: true };
 
@@ -760,8 +713,7 @@ export const cancelOrder = async (req, res) => {
         req.userId, reason || "");
       await notifyOrderStatus(order.user_id, order.id, "cancelled", client);
 
-      const fresh = await client.query(`${ORDER_SELECT} WHERE o.id = $1`, [order.id]);
-      return { order: fresh.rows[0] };
+      return { order: await findOrderById(order.id, client) };
     });
 
 
@@ -782,39 +734,15 @@ export const listAllOrders = async (req, res) => {
     if (!pagination) return res.status(400).json({ success: false, message: "Trang hoặc giới hạn không hợp lệ" });
     const { page, limit, skip } = pagination;
 
-    const params = [];
-    let where = `WHERE ${VISIBLE_ORDER_FILTER}`;
-    if (req.query.status) {
-      if (!VALID_STATUSES.includes(req.query.status)) {
-        return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
-      }
-      params.push(req.query.status);
-      where += ` AND o.status = $${params.length}`;
+    const status = req.query.status;
+    if (status && !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, message: "Trạng thái không hợp lệ" });
     }
 
-    // Thong tin khach nam o field "customer": app Android doc "userId" la chuoi.
-    const selectWithCustomer = `
-      SELECT o.*, u.name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
-             COALESCE((
-               SELECT json_agg(json_build_object(
-                        'food_id', i.food_id, 'name', i.name, 'price', i.price,
-                        'quantity', i.quantity, 'image', i.image) ORDER BY i.id)
-               FROM order_items i WHERE i.order_id = o.id
-             ), '[]'::json) AS items
-      FROM orders o JOIN users u ON u.id = o.user_id`;
-
-    const [list, count] = await Promise.all([
-      query(
-        `${selectWithCustomer} ${where} ORDER BY o.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-        [...params, limit, skip]
-      ),
-      query(`SELECT count(*)::int AS total FROM orders o ${where}`, params),
-    ]);
-
-    const total = count.rows[0].total;
+    const { rows, total } = await listOrdersForAdmin({ status, limit, skip });
     res.json({
       success: true,
-      orders: list.rows.map(toOrder),
+      orders: rows.map(toOrder),
       pagination: { currentPage: page, totalPages: Math.ceil(total / limit), totalOrders: total },
     });
   } catch (error) {
@@ -825,32 +753,10 @@ export const listAllOrders = async (req, res) => {
 
 export const getOrderStats = async (req, res) => {
   try {
-    // Mot query cho toan bo thong ke theo trang thai, thay cho $group tren toan
-    // bo collection. generate_series dam bao 7 ngay deu co mat ke ca ngay khong
-    // co don - ban Mongo chi tra ve nhung ngay co du lieu.
-    const [statusRows, dayRows] = await Promise.all([
-      query(
-        `SELECT status, count(*)::int AS count, COALESCE(sum(amount), 0)::bigint AS total
-         FROM orders WHERE ${VISIBLE_ORDER_FILTER} GROUP BY status`
-      ),
-      query(
-        `SELECT to_char(d.day, 'YYYY-MM-DD') AS date,
-                COALESCE(sum(o.amount), 0)::bigint AS revenue,
-                count(o.id)::int AS count
-         FROM generate_series(
-                (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '6 days',
-                (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date,
-                interval '1 day') AS d(day)
-         LEFT JOIN orders o
-                ON o.status = 'delivered'
-               AND (o.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = d.day
-               AND (o.payment_method <> 'vnpay' OR o.payment_status = 'paid')
-         GROUP BY d.day ORDER BY d.day`
-      ),
-    ]);
+    const { statusRows, dayRows } = await readOrderStats();
 
     const byStatus = VALID_STATUSES.map((status) => {
-      const found = statusRows.rows.find((row) => row.status === status);
+      const found = statusRows.find((row) => row.status === status);
       return {
         status,
         count: found ? found.count : 0,
@@ -860,7 +766,7 @@ export const getOrderStats = async (req, res) => {
 
     const totalOrders = byStatus.reduce((sum, item) => sum + item.count, 0);
     const totalRevenue = byStatus.find((item) => item.status === "delivered")?.total || 0;
-    const last7Days = dayRows.rows.map((row) => ({
+    const last7Days = dayRows.map((row) => ({
       date: row.date,
       revenue: Number(row.revenue),
       count: row.count,
@@ -910,8 +816,7 @@ export const updateOrderStatus = async (req, res) => {
       await recordStatusChange(client, order.id, order.status, status, "admin", req.userId);
       await notifyOrderStatus(order.user_id, order.id, status, client);
 
-      const fresh = await client.query(`${ORDER_SELECT} WHERE o.id = $1`, [order.id]);
-      return { order: fresh.rows[0] };
+      return { order: await findOrderById(order.id, client) };
     });
 
 
