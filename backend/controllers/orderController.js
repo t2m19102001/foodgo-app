@@ -1,10 +1,16 @@
 import { createHash, randomInt } from "node:crypto";
 import { withTransaction } from "../db/index.js";
 import {
-  run, toOrder,
+  toOrder,
   findOrderById, findOrderByRequestId,
   listOrdersForUser, listOrdersForAdmin, readOrderStats,
   findReusablePayUrl, findActivePayUrl,
+  lockOrderById, lockOrderByRequestId, lockFoodsForOrder, lockStaleVnpayOrders,
+  insertOrder, takeStock, insertOrderItem, setOrderAmount, restoreStock,
+  changeOrderStatus, cancelOrderIfStatus, cancelOrderNow, setOrderStatus, recordStatusChange,
+  claimPaymentAttempt, insertPaymentAttempt, findPaymentAttempt, insertPaymentLedger,
+  markPaymentFailed, markPaymentPaid, markRefundRequired,
+  insertNotification,
 } from "../db/orders.js";
 import { buildPaymentUrl, verifySignature } from "../util/vnpay.js";
 import { parseOrderPagination } from "../util/pagination.js";
@@ -55,26 +61,11 @@ const statusMessages = {
 // Ma don rut gon 8 ky tu cuoi, giong cach app hien thi "Don hang #xxxxxxxx"
 const shortCode = (orderId) => String(orderId).slice(-8);
 
-const notify = async (client, userId, title, message) => {
-  try {
-    await run(client, "INSERT INTO notifications (user_id, title, message) VALUES ($1, $2, $3)",
-      [userId, title, message]);
-  } catch (error) {
-    logger.error("Notify error:", error);
-  }
-};
-
 const notifyOrderStatus = (userId, orderId, status, client) => {
   const message = statusMessages[status];
   if (!message) return Promise.resolve();
-  return notify(client, userId, "Cập nhật đơn hàng", `${message} (#${shortCode(orderId)})`);
+  return insertNotification(client, userId, "Cập nhật đơn hàng", `${message} (#${shortCode(orderId)})`);
 };
-
-const recordStatusChange = (client, orderId, fromStatus, toStatus, actorRole, changedBy, note = "") =>
-  run(client,
-    `INSERT INTO order_status_history (order_id, from_status, to_status, actor_role, changed_by, note)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [orderId, fromStatus, toStatus, actorRole, changedBy, note]);
 
 export const placeOrder = async (req, res) => {
   try {
@@ -124,81 +115,50 @@ export const placeOrder = async (req, res) => {
     const foodIds = [...quantityByFoodId.keys()];
 
     const result = await withTransaction(async (client) => {
-      // Dat hang idempotent: INSERT ... ON CONFLICT DO NOTHING tren partial
-      // unique index (user_id, client_request_id). Khong con canh doc-truoc roi
-      // bat duplicate-key o catch nhu ban Mongo (noi logic fingerprint bi viet
-      // lai lan hai trong khoi catch).
-      const inserted = await client.query(
-        `INSERT INTO orders (user_id, client_request_id, request_fingerprint, amount,
-                             ship_full_name, ship_phone, ship_address, ship_note,
-                             payment_method, status, payment_expires_at)
-         VALUES ($1, $2, $3, 0, $4, $5, $6, $7, $8, 'pending',
-                 CASE WHEN $8 = 'vnpay' THEN now() + make_interval(mins => $9::int) END)
-         ON CONFLICT (user_id, client_request_id) WHERE client_request_id IS NOT NULL
-         DO NOTHING
-         RETURNING id`,
-        [
-          req.userId, clientRequestId, requestFingerprint,
-          address.fullName.trim(), address.phone.trim(), address.address.trim(),
-          (address.note || "").trim(), normalizedPaymentMethod, PAYMENT_TTL_MINUTES,
-        ]
-      );
+      const orderId = await insertOrder(client, {
+        userId: req.userId,
+        clientRequestId,
+        requestFingerprint,
+        address,
+        paymentMethod: normalizedPaymentMethod,
+        paymentTtlMinutes: PAYMENT_TTL_MINUTES,
+      });
 
-      if (inserted.rowCount === 0) {
+      // Ma yeu cau da duoc dung: khong tao don moi, tra lai don da co
+      if (!orderId) {
         return {
           duplicate: true,
           order: await findOrderByRequestId(req.userId, clientRequestId, client),
         };
       }
 
-      const orderId = inserted.rows[0].id;
-
-      // Khoa cac mon theo thu tu id de hai don dat cung luc khong deadlock
-      const foods = await client.query(
-        `SELECT id, name, price, image, is_available, stock, track_stock
-         FROM foods WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
-        [foodIds]
-      );
+      const foods = await lockFoodsForOrder(client, foodIds);
 
       // Tu day tro di phai THROW chu khong return: don da duoc INSERT o tren de
       // chiem khoa idempotency, return se commit va de lai don mo coi.
-      if (foods.rowCount !== foodIds.length) {
+      if (foods.length !== foodIds.length) {
         throw new HttpError(400, "Có món ăn không còn tồn tại");
       }
 
-      const soldOut = foods.rows.find((food) => !food.is_available);
+      const soldOut = foods.find((food) => !food.is_available);
       if (soldOut) {
         throw new HttpError(400, `Món "${soldOut.name}" hiện đã hết hàng`);
       }
 
       let amount = 0;
-      for (const food of foods.rows) {
+      for (const food of foods) {
         const quantity = quantityByFoodId.get(String(food.id));
 
-        // Chi tru ton kho voi mon co bat track_stock (xem migration 002).
-        // Dieu kien stock >= quantity nam trong chinh cau UPDATE, nen hai don
-        // song song khong the cung di qua.
-        if (food.track_stock) {
-          const taken = await client.query(
-            "UPDATE foods SET stock = stock - $2 WHERE id = $1 AND stock >= $2",
-            [food.id, quantity]
-          );
-          if (taken.rowCount === 0) {
-            throw new HttpError(400, `Món "${food.name}" không còn đủ số lượng`);
-          }
+        // Chi tru ton kho voi mon co bat track_stock (xem migration 002)
+        if (food.track_stock && !await takeStock(client, food.id, quantity)) {
+          throw new HttpError(400, `Món "${food.name}" không còn đủ số lượng`);
         }
 
-        // Ten, gia, anh luon lay tu DB - khong tin du lieu client gui len
-        await client.query(
-          `INSERT INTO order_items (order_id, food_id, name, price, quantity, image)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [orderId, food.id, food.name, food.price, quantity, food.image]
-        );
+        await insertOrderItem(client, orderId, food, quantity);
         amount += Number(food.price) * quantity;
       }
 
-      // Tong tien do server tu cong lai, bo qua "amount" trong request
-      await client.query("UPDATE orders SET amount = $2 WHERE id = $1", [orderId, amount]);
+      await setOrderAmount(client, orderId, amount);
       await recordStatusChange(client, orderId, null, "pending", "customer", req.userId);
 
       // Chi bao "dat hang thanh cong" ngay cho COD - khong qua cong thanh toan
@@ -207,7 +167,7 @@ export const placeOrder = async (req, res) => {
       // CHUA bao cho khach: thong bao va ket qua tra ve chi den khi thanh toan
       // thanh cong (xem processVnpayResult).
       if (normalizedPaymentMethod === "cod") {
-        await notify(client, req.userId, "Đặt hàng thành công",
+        await insertNotification(client, req.userId, "Đặt hàng thành công",
           `Đơn hàng #${shortCode(orderId)} đã được tạo, tổng tiền ${amount.toLocaleString("vi-VN")}đ. `
           + "Chúng tôi sẽ xác nhận trong thời gian sớm nhất.");
       }
@@ -286,22 +246,9 @@ const getOrIssuePayUrl = async (order, ip) => {
   });
 
   await withTransaction(async (client) => {
-    // Chi cap cho don con dang cho thanh toan: job het han hoac khach huy co
-    // the vua chay xong giua luc doc va luc ghi
-    const updated = await client.query(
-      `UPDATE orders
-       SET vnp_txn_ref = $2,
-           payment_expires_at = GREATEST(COALESCE(payment_expires_at, $3), $3)
-       WHERE id = $1 AND status = 'pending' AND payment_status <> 'paid'
-       RETURNING amount`,
-      [order.id, txnRef, expiresAt]
-    );
-    if (updated.rowCount === 0) throw new HttpError(410, EXPIRED_MESSAGE);
-    await client.query(
-      `INSERT INTO payment_attempts (txn_ref, order_id, amount, pay_url, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [txnRef, order.id, updated.rows[0].amount, payUrl, expiresAt]
-    );
+    const amount = await claimPaymentAttempt(client, order.id, txnRef, expiresAt);
+    if (amount === undefined) throw new HttpError(410, EXPIRED_MESSAGE);
+    await insertPaymentAttempt(client, { txnRef, orderId: order.id, amount, payUrl, expiresAt });
   });
   return payUrl;
 };
@@ -311,11 +258,11 @@ const getOrIssuePayUrl = async (order, ip) => {
 // mot giao dich khac (khach tra hai lan). Ban ghi payments da luu o tren nen
 // doi soat va hoan tien duoc; scripts/reconcile-payments.mjs liet ke cac don nay.
 const flagRefund = async (client, order, transactionNo) => {
-  await client.query("UPDATE orders SET refund_required = true WHERE id = $1", [order.id]);
+  await markRefundRequired(client, order.id);
   logger.error(
     `VNPay: nhan tien cho don ${order.id} (status=${order.status}, payment_status=${order.payment_status}), `
     + `giao dich ${transactionNo || "?"} - CAN HOAN TIEN`);
-  await notify(client, order.user_id, "Thanh toán sẽ được hoàn lại",
+  await insertNotification(client, order.user_id, "Thanh toán sẽ được hoàn lại",
     order.status === "cancelled"
       ? `Khoản thanh toán VNPay cho đơn #${shortCode(order.id)} đến sau khi phiên đặt hàng đã hết hạn hoặc bị hủy. Chúng tôi sẽ hoàn tiền cho bạn.`
       : `Đơn hàng #${shortCode(order.id)} đã được thanh toán trước đó. Khoản thanh toán thừa sẽ được hoàn lại cho bạn.`);
@@ -342,24 +289,14 @@ const processVnpayResult = async (vnpQuery, source) => {
   }
 
   return withTransaction(async (client) => {
-    const { rows } = await client.query(
-      `SELECT id, user_id, amount, status, payment_status
-       FROM orders WHERE id = $1 FOR UPDATE`,
-      [orderId]
-    );
-    const order = rows[0];
+    const order = await lockOrderById(client, orderId);
     if (!order) return { ok: false, code: "01" };
 
-    // txnRef phai la mot lan thanh toan server THUC SU da cap cho dung don nay
-    // (khong chi la txnRef moi nhat - xem getOrIssuePayUrl)
-    const attempt = await client.query(
-      "SELECT amount FROM payment_attempts WHERE txn_ref = $1 AND order_id = $2",
-      [txnRef, order.id]
-    );
-    if (attempt.rowCount === 0) return { ok: false, code: "01" };
+    const attempt = await findPaymentAttempt(client, txnRef, order.id);
+    if (!attempt) return { ok: false, code: "01" };
 
     // So tien VNPay gui ve tinh theo don vi x100
-    const expectedAmount = Math.round(Number(attempt.rows[0].amount) * 100);
+    const expectedAmount = Math.round(Number(attempt.amount) * 100);
     const paidAmount = Number(vnpQuery.vnp_Amount);
     if (!Number.isFinite(paidAmount) || paidAmount !== expectedAmount) {
       logger.error(
@@ -384,39 +321,29 @@ const processVnpayResult = async (vnpQuery, source) => {
       return { ok: true, code: "00", order, success: true };
     }
 
-    // Ledger append-only. UNIQUE (vnp_transaction_no) lam idempotency nam o tang
-    // DB: Return URL va IPN cung bao ve mot giao dich thi chi mot ban ghi duoc
-    // tao, va rowCount = 0 nghia la da xu ly truoc do.
-    const ledger = await client.query(
-      `INSERT INTO payments (order_id, vnp_txn_ref, vnp_transaction_no, vnp_response_code,
-                             vnp_transaction_status, vnp_bank_code, vnp_card_type,
-                             vnp_amount, vnp_pay_date, source, signature_valid, raw)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11::jsonb)
-       ON CONFLICT (vnp_transaction_no) WHERE vnp_transaction_no IS NOT NULL
-       DO NOTHING
-       RETURNING id`,
-      [
-        order.id, txnRef, transactionNo,
-        vnpQuery.vnp_ResponseCode || null, vnpQuery.vnp_TransactionStatus || null,
-        vnpQuery.vnp_BankCode || null, vnpQuery.vnp_CardType || null,
-        paidAmount, vnpQuery.vnp_PayDate || null, source,
-        JSON.stringify(vnpQuery),
-      ]
-    );
-    if (ledger.rowCount === 0) {
+    // Ghi ledger TRUOC khi doi trang thai don: UNIQUE (vnp_transaction_no) lam
+    // idempotency nam o tang DB, nen Return URL va IPN cung bao ve mot giao dich
+    // thi chi mot lan di qua duoc day.
+    const ledgerWritten = await insertPaymentLedger(client, {
+      orderId: order.id,
+      txnRef,
+      transactionNo,
+      responseCode: vnpQuery.vnp_ResponseCode || null,
+      transactionStatus: vnpQuery.vnp_TransactionStatus || null,
+      bankCode: vnpQuery.vnp_BankCode || null,
+      cardType: vnpQuery.vnp_CardType || null,
+      amount: paidAmount,
+      payDate: vnpQuery.vnp_PayDate || null,
+      source,
+      raw: vnpQuery,
+    });
+    if (!ledgerWritten) {
       return { ok: true, code: "00", order, success: order.payment_status === "paid" };
     }
 
     if (!success) {
-      // Khong bao gio ha 'paid' xuong 'failed'; don da huy cung khong doi
-      const failed = await client.query(
-        `UPDATE orders SET payment_status = 'failed'
-         WHERE id = $1 AND payment_status = 'unpaid' AND status <> 'cancelled'
-         RETURNING id`,
-        [order.id]
-      );
-      if (failed.rowCount > 0) {
-        await notify(client, order.user_id, "Thanh toán VNPay thất bại",
+      if (await markPaymentFailed(client, order.id)) {
+        await insertNotification(client, order.user_id, "Thanh toán VNPay thất bại",
           `Thanh toán VNPay cho đơn hàng #${shortCode(order.id)} không thành công. `
           + "Bạn có thể thanh toán lại hoặc hủy để chọn phương thức khác trong ứng dụng.");
       }
@@ -432,31 +359,22 @@ const processVnpayResult = async (vnpQuery, source) => {
       return { ok: true, code: "00", order, success: false, refund: true };
     }
 
-    // Sua loi "that bai mot lan thi lan tra tien sau bi nuot": chap nhan ca
-    // 'failed' -> 'paid'. Truoc day dieu kien chi la payment_status = 'unpaid'
-    // nen sau mot lan that bai, lan tra tien thanh cong khong doi duoc gi ma
-    // server van tra RspCode 00 cho VNPay.
-    const updated = await client.query(
-      `UPDATE orders SET payment_status = 'paid'
-       WHERE id = $1 AND payment_status IN ('unpaid', 'failed')
-       RETURNING status`,
-      [order.id]
-    );
-    if (updated.rowCount === 0) {
+    const statusAfterPayment = await markPaymentPaid(client, order.id);
+    if (statusAfterPayment === undefined) {
       // Khong xay ra khi da khoa FOR UPDATE o tren; de phong thi van khong nuot tien
       await flagRefund(client, order, transactionNo);
       return { ok: true, code: "00", order, success: false, refund: true };
     }
 
-    if (updated.rows[0].status === "pending") {
-      await client.query("UPDATE orders SET status = 'confirmed' WHERE id = $1", [order.id]);
+    if (statusAfterPayment === "pending") {
+      await setOrderStatus(client, order.id, "confirmed");
       await recordStatusChange(client, order.id, "pending", "confirmed", "system", null,
         "Thanh toan VNPay thanh cong");
     }
 
     // Voi VNPay day la thong bao DAU TIEN ma khach nhan duoc ve don nay - luc
     // dat hang server khong bao gi ca (xem placeOrder).
-    await notify(client, order.user_id, "Đặt hàng & thanh toán thành công",
+    await insertNotification(client, order.user_id, "Đặt hàng & thanh toán thành công",
       `Đơn hàng #${shortCode(order.id)} đã được tạo, tổng tiền ${Number(order.amount).toLocaleString("vi-VN")}đ, đã thanh toán qua VNPay.`);
 
     return { ok: true, code: "00", order, success: true };
@@ -585,14 +503,6 @@ export const getOrderByRequestId = async (req, res) => {
   }
 };
 
-// Hoan lai ton kho cho cac mon co track_stock khi don bi huy
-const restoreStock = (client, orderId) => client.query(
-  `UPDATE foods f SET stock = f.stock + i.quantity
-   FROM order_items i
-   WHERE i.order_id = $1 AND f.id = i.food_id AND f.track_stock`,
-  [orderId]
-);
-
 // Khach bo thanh toan VNPay de doi phuong thuc / doi gio. Huy don dang giu cho
 // va hoan kho. Idempotent: goi lai voi don da huy van tra 200.
 //   404  khong co don nao voi ma nay - app chi can xoa yeu cau dang cho
@@ -603,12 +513,7 @@ export const abandonPendingPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: "Mã yêu cầu không hợp lệ" });
     }
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query(
-        `SELECT id, status, payment_method, payment_status FROM orders
-         WHERE user_id = $1 AND client_request_id = $2 FOR UPDATE`,
-        [req.userId, req.params.clientRequestId]
-      );
-      const order = rows[0];
+      const order = await lockOrderByRequestId(client, req.userId, req.params.clientRequestId);
       if (!order) throw new HttpError(404, "Không tìm thấy yêu cầu đặt hàng");
 
       if (order.payment_method !== "vnpay" || order.payment_status === "paid") {
@@ -616,10 +521,7 @@ export const abandonPendingPayment = async (req, res) => {
       }
       if (order.status === "cancelled") return { cancelled: true };
 
-      await client.query(
-        `UPDATE orders SET status = 'cancelled', cancel_reason = $2 WHERE id = $1`,
-        [order.id, "Khách hủy thanh toán VNPay"]
-      );
+      await cancelOrderNow(client, order.id, "Khách hủy thanh toán VNPay");
       await restoreStock(client, order.id);
       await recordStatusChange(client, order.id, order.status, "cancelled", "customer",
         req.userId, "Khach huy thanh toan VNPay");
@@ -646,26 +548,14 @@ export const abandonPendingPayment = async (req, res) => {
 // refund_required, khong bao gio bi nuot.
 export const expireStaleVnpayOrders = async ({ graceMinutes = EXPIRY_GRACE_MINUTES, batchSize = 100 } = {}) =>
   withTransaction(async (client) => {
-    const { rows } = await client.query(
-      `SELECT id, status FROM orders
-       WHERE payment_method = 'vnpay' AND status = 'pending'
-         AND payment_status IN ('unpaid', 'failed')
-         AND payment_expires_at < now() - make_interval(mins => $1::int)
-       ORDER BY payment_expires_at
-       LIMIT $2
-       FOR UPDATE SKIP LOCKED`,
-      [graceMinutes, batchSize]
-    );
-    for (const order of rows) {
-      await client.query(
-        "UPDATE orders SET status = 'cancelled', cancel_reason = $2 WHERE id = $1",
-        [order.id, "Hết hạn thanh toán VNPay"]
-      );
+    const stale = await lockStaleVnpayOrders(client, graceMinutes, batchSize);
+    for (const order of stale) {
+      await cancelOrderNow(client, order.id, "Hết hạn thanh toán VNPay");
       await restoreStock(client, order.id);
       await recordStatusChange(client, order.id, order.status, "cancelled", "system", null,
         "Het han thanh toan VNPay");
     }
-    return rows.length;
+    return stale.length;
   });
 
 export const cancelOrder = async (req, res) => {
@@ -679,11 +569,7 @@ export const cancelOrder = async (req, res) => {
     }
 
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query(
-        "SELECT id, user_id, status, payment_status FROM orders WHERE id = $1 FOR UPDATE",
-        [req.params.id]
-      );
-      const order = rows[0];
+      const order = await lockOrderById(client, req.params.id);
       if (!order) throw new HttpError(404, "Không tìm thấy đơn hàng");
       if (order.user_id !== req.userId) {
         throw new HttpError(403, "Không có quyền hủy đơn hàng này");
@@ -698,13 +584,11 @@ export const cancelOrder = async (req, res) => {
         throw new HttpError(409, "Đơn hàng đã thanh toán, vui lòng liên hệ hỗ trợ để được hoàn tiền");
       }
 
-      const updated = await client.query(
-        `UPDATE orders SET status = 'cancelled', cancel_reason = $2
-         WHERE id = $1 AND status = $3
-         RETURNING id`,
-        [order.id, reason || "", order.status]
-      );
-      if (updated.rowCount === 0) {
+      const cancelled = await cancelOrderIfStatus(client, order.id, {
+        from: order.status,
+        reason: reason || "",
+      });
+      if (!cancelled) {
         throw new HttpError(409, "Đơn hàng đã thay đổi, vui lòng tải lại");
       }
 
@@ -791,11 +675,7 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query(
-        "SELECT id, user_id, status, payment_status FROM orders WHERE id = $1 FOR UPDATE",
-        [req.params.id]
-      );
-      const order = rows[0];
+      const order = await lockOrderById(client, req.params.id);
       if (!order) throw new HttpError(404, "Không tìm thấy đơn hàng");
       if (!canTransition(order.status, status)) {
         throw new HttpError(400, "Chuyển trạng thái không hợp lệ");
@@ -804,11 +684,8 @@ export const updateOrderStatus = async (req, res) => {
         throw new HttpError(409, "Đơn hàng đã thanh toán, phải hoàn tiền trước khi hủy");
       }
 
-      const updated = await client.query(
-        "UPDATE orders SET status = $2 WHERE id = $1 AND status = $3 RETURNING id",
-        [order.id, status, order.status]
-      );
-      if (updated.rowCount === 0) {
+      const changed = await changeOrderStatus(client, order.id, { from: order.status, to: status });
+      if (!changed) {
         throw new HttpError(409, "Đơn hàng đã thay đổi, vui lòng tải lại");
       }
 
