@@ -113,29 +113,69 @@ export const listOrdersForAdmin = ({ status, limit, skip }) => {
 
 // ----------------------------------------------------------------- doc: thong ke
 
-// Mot query cho toan bo thong ke theo trang thai, thay cho $group tren toan bo
-// collection. generate_series dam bao 7 ngay deu co mat ke ca ngay khong co don
-// - ban Mongo chi tra ve nhung ngay co du lieu.
+// Ngay lam moc deu tinh theo gio Viet Nam, khong theo UTC: 23h ngay 5/11 gio VN
+// la 16h ngay 5/11 UTC, nen group theo UTC se day don buoi toi sang ngay hom sau
+// va bao cao doanh thu lech ngay.
+const VN_TZ = "Asia/Ho_Chi_Minh";
+const VN_TODAY = `(now() AT TIME ZONE '${VN_TZ}')::date`;
+
+// Khoang [00:00 ngay dau, 00:00 ngay sau ngay cuoi) cua 7 ngay gan nhat, doi ve
+// timestamptz de so SANH TRUC TIEP voi cot created_at.
+const LAST_7_DAYS_START = `(((${VN_TODAY}) - interval '6 days') AT TIME ZONE '${VN_TZ}')`;
+const LAST_7_DAYS_END = `(((${VN_TODAY}) + interval '1 day') AT TIME ZONE '${VN_TZ}')`;
+
+export const STATS_BY_STATUS_SQL =
+  `SELECT status, count(*)::int AS count, COALESCE(sum(amount), 0)::bigint AS total
+   FROM orders WHERE ${VISIBLE_ORDER_FILTER} GROUP BY status`;
+
+// Doanh thu 7 ngay gan nhat theo ngay dia phuong Viet Nam.
+//
+// Tong theo ngay duoc tinh trong mot subquery co dieu kien KHOANG tren
+// created_at, roi moi LEFT JOIN vao day du 7 ngay (generate_series dam bao ngay
+// khong co don van xuat hien voi so 0 - ban Mongo chi tra ve nhung ngay co du
+// lieu).
+//
+// Ban truoc loc bang `(o.created_at AT TIME ZONE ...)::date = d.day`. Boc ham
+// quanh cot nen khong index duoc: Postgres quet toan bang orders roi sort tran
+// ra dia. Tren 100.000 don: 100.8 ms -> 9.3 ms.
+//
+// MOI moc thoi gian deu duoc doi tuong minh bang `AT TIME ZONE 'Asia/Ho_Chi_Minh'`.
+// Day KHONG phai cho dep ma la bat buoc: neu de moc la timestamp khong mui gio
+// thi Postgres tu suy ra theo TimeZone cua SESSION, va cua so 7 ngay se lech.
+// Postgres tren may dev thua TimeZone cua may (Asia/Ho_Chi_Minh, +07) con Neon
+// chay UTC - nghia la bo moc tuong minh di thi may dev van dung trong khi
+// production lech 7 tieng. test/orderStats.db.test.js ep session sang nhieu mui
+// gio khac nhau de chan dung loi nay.
+//
+// Cach chan khoang va cach boc ham cho KET QUA GIONG HET NHAU vi
+// Asia/Ho_Chi_Minh la UTC+7 co dinh, khong co gio mua he - moi nua dem dia
+// phuong ung voi dung mot thoi diem. O mui gio co DST thi phai tinh lai.
+export const REVENUE_LAST_7_DAYS_SQL =
+  `SELECT to_char(d.day, 'YYYY-MM-DD') AS date,
+          COALESCE(p.revenue, 0)::bigint AS revenue,
+          COALESCE(p.count, 0)::int AS count
+   FROM generate_series(
+          (${VN_TODAY}) - interval '6 days',
+          (${VN_TODAY}),
+          interval '1 day') AS d(day)
+   LEFT JOIN (
+     SELECT (o.created_at AT TIME ZONE '${VN_TZ}')::date AS day,
+            sum(o.amount)::bigint AS revenue,
+            count(*)::int AS count
+     FROM orders o
+     WHERE o.status = 'delivered'
+       AND (o.payment_method <> 'vnpay' OR o.payment_status = 'paid')
+       AND o.created_at >= ${LAST_7_DAYS_START}
+       AND o.created_at <  ${LAST_7_DAYS_END}
+     GROUP BY 1
+   ) p ON p.day = d.day::date
+   ORDER BY d.day`;
+
+// Hai query doc lap nhau nen chay song song.
 export const readOrderStats = async () => {
   const [statusRows, dayRows] = await Promise.all([
-    query(
-      `SELECT status, count(*)::int AS count, COALESCE(sum(amount), 0)::bigint AS total
-       FROM orders WHERE ${VISIBLE_ORDER_FILTER} GROUP BY status`
-    ),
-    query(
-      `SELECT to_char(d.day, 'YYYY-MM-DD') AS date,
-              COALESCE(sum(o.amount), 0)::bigint AS revenue,
-              count(o.id)::int AS count
-       FROM generate_series(
-              (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '6 days',
-              (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date,
-              interval '1 day') AS d(day)
-       LEFT JOIN orders o
-              ON o.status = 'delivered'
-             AND (o.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = d.day
-             AND (o.payment_method <> 'vnpay' OR o.payment_status = 'paid')
-       GROUP BY d.day ORDER BY d.day`
-    ),
+    query(STATS_BY_STATUS_SQL),
+    query(REVENUE_LAST_7_DAYS_SQL),
   ]);
   return { statusRows: statusRows.rows, dayRows: dayRows.rows };
 };
