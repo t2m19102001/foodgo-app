@@ -183,6 +183,16 @@
         <item name="android:paddingBottom">10dp</item>
     </style>
 
+    <style name="Text.App.Warning" parent="">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/warning</item>
+        <item name="android:background">@drawable/bg_warning_box</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+    </style>
+
     <style name="Text.App.Empty" parent="">
         <item name="android:textSize">15sp</item>
         <item name="android:textColor">@color/text_secondary</item>

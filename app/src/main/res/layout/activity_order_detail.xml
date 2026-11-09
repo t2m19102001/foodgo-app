@@ -236,6 +236,18 @@
                     app:iconTint="@color/white" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_assign_driver"
+                    style="@style/Widget.App.Button.Outlined"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Gán tài xế"
+                    app:icon="@drawable/ic_truck"
+                    app:iconGravity="textStart"
+                    app:iconPadding="10dp"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btn_cancel_order"
                     style="@style/Widget.App.Button.Danger"
                     android:layout_width="match_parent"

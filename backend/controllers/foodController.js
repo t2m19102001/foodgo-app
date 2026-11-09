@@ -3,6 +3,9 @@ import { mapFood } from "../db/mappers.js";
 import { deleteImageSafe } from "../util/uploadFile.js";
 import { buildMeta, parseOptionalPagination, resolveLimits } from "../util/pagination.js";
 import { isUuid } from "../util/ids.js";
+import { parseSearchIntent } from "../util/searchIntent.js";
+import { searchFoods } from "../db/foodSearch.js";
+import { callOpenAi, extractText } from "../util/openai.js";
 import logger from "../util/logger.js";
 
 const validPrice = (price) => price !== null && price !== undefined
@@ -11,10 +14,14 @@ const validPrice = (price) => price !== null && price !== undefined
 // Gia luu bang bigint (VND, so nguyen) nen phai lam tron, khong nhan so thuc
 const toVnd = (price) => Math.round(Number(price));
 
+// 1-180 phut, khop CHECK constraint cua cot foods.prep_time_minutes (migration 006)
+const validPrepTime = (value) => Number.isSafeInteger(Number(value))
+  && Number(value) > 0 && Number(value) <= 180;
+
 // App doc Food.category la TEN danh muc, nen moi truy van doc deu phai JOIN
 const FOOD_SELECT = `
   SELECT f.id, f.name, f.description, f.price, f.image, f.is_available, f.stock,
-         f.created_at, f.updated_at, c.name AS category_name
+         f.prep_time_minutes, f.created_at, f.updated_at, c.name AS category_name
   FROM foods f JOIN categories c ON c.id = f.category_id`;
 
 const findCategoryIdByName = async (name) => {
@@ -24,7 +31,7 @@ const findCategoryIdByName = async (name) => {
 
 export const addFood = async (req, res) => {
   try {
-    const { name, description, price, category, stock } = req.body;
+    const { name, description, price, category, stock, prepTimeMinutes } = req.body;
 
     if (!req.file) {
       return res.status(400).json({ success: false, message: "Vui lòng upload ảnh món ăn" });
@@ -39,6 +46,10 @@ export const addFood = async (req, res) => {
       await deleteImageSafe(req.file.filename);
       return res.status(400).json({ success: false, message: "Số lượng tồn kho không hợp lệ" });
     }
+    if (prepTimeMinutes !== undefined && !validPrepTime(prepTimeMinutes)) {
+      await deleteImageSafe(req.file.filename);
+      return res.status(400).json({ success: false, message: "Thời gian chuẩn bị không hợp lệ" });
+    }
 
     const categoryId = await findCategoryIdByName(category);
     if (!categoryId) {
@@ -47,9 +58,9 @@ export const addFood = async (req, res) => {
     }
 
     const { rows } = await query(
-      `INSERT INTO foods (name, description, price, image, category_id, stock)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, name, description, price, image, is_available, stock,
+      `INSERT INTO foods (name, description, price, image, category_id, stock, prep_time_minutes)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 15))
+       RETURNING id, name, description, price, image, is_available, stock, prep_time_minutes,
                  created_at, updated_at,
                  (SELECT name FROM categories WHERE id = $5) AS category_name`,
       [
@@ -59,6 +70,7 @@ export const addFood = async (req, res) => {
         req.file.filename,
         categoryId,
         stock === undefined ? 0 : Number(stock),
+        prepTimeMinutes === undefined ? null : Number(prepTimeMinutes),
       ]
     );
 
@@ -156,7 +168,7 @@ export const getFoodByCategory = async (req, res) => {
 
 export const updateFood = async (req, res) => {
   try {
-    const { name, description, price, category, isAvailable, stock } = req.body;
+    const { name, description, price, category, isAvailable, stock, prepTimeMinutes } = req.body;
 
     if (!isUuid(req.params.id)) {
       if (req.file) await deleteImageSafe(req.file.filename);
@@ -167,6 +179,7 @@ export const updateFood = async (req, res) => {
         || (price !== undefined && !validPrice(price))
         || (description !== undefined && typeof description !== "string")
         || (stock !== undefined && (!Number.isSafeInteger(Number(stock)) || Number(stock) < 0))
+        || (prepTimeMinutes !== undefined && !validPrepTime(prepTimeMinutes))
         || (isAvailable !== undefined && !["true", "false"].includes(String(isAvailable)))) {
       if (req.file) await deleteImageSafe(req.file.filename);
       return res.status(400).json({ success: false, message: "Thông tin món ăn không hợp lệ" });
@@ -183,15 +196,16 @@ export const updateFood = async (req, res) => {
 
     const { rows } = await query(
       `UPDATE foods SET
-         name         = COALESCE($2, name),
-         description   = COALESCE($3, description),
-         price         = COALESCE($4, price),
-         image         = COALESCE($5, image),
-         category_id   = COALESCE($6, category_id),
-         is_available  = COALESCE($7, is_available),
-         stock         = COALESCE($8, stock)
+         name              = COALESCE($2, name),
+         description       = COALESCE($3, description),
+         price             = COALESCE($4, price),
+         image             = COALESCE($5, image),
+         category_id       = COALESCE($6, category_id),
+         is_available      = COALESCE($7, is_available),
+         stock             = COALESCE($8, stock),
+         prep_time_minutes = COALESCE($9, prep_time_minutes)
        WHERE id = $1
-       RETURNING id, name, description, price, image, is_available, stock,
+       RETURNING id, name, description, price, image, is_available, stock, prep_time_minutes,
                  created_at, updated_at,
                  (SELECT name FROM categories WHERE id = foods.category_id) AS category_name,
                  (SELECT image FROM foods WHERE id = $1) AS old_image`,
@@ -204,6 +218,7 @@ export const updateFood = async (req, res) => {
         categoryId,
         isAvailable === undefined ? null : String(isAvailable) === "true",
         stock === undefined ? null : Number(stock),
+        prepTimeMinutes === undefined ? null : Number(prepTimeMinutes),
       ]
     );
 
@@ -248,5 +263,94 @@ export const removeFood = async (req, res) => {
   } catch (error) {
     logger.error("Remove food error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi xóa món ăn" });
+  }
+};
+
+// ======================================================= AI Search (module 4)
+//
+// Rule-based TRUOC (parseSearchIntent, mien phi, tuc thi). Chi goi LLM khi
+// rule bao needsLlmFallback - va LLM CHI duoc quyet dinh THAM SO loc (JSON),
+// khong bao gio tu tra ve mon an: cau SQL that (searchFoods) luon la nguon du
+// lieu cuoi cung, nen khong the "bia" ket qua du LLM noi gi.
+const MAX_QUERY_LENGTH = 200;
+
+const buildExtractionPrompt = (text, categoryNames) => `Trích xuất bộ lọc tìm kiếm món ăn từ câu sau. Chỉ trả về DUY NHẤT một JSON object, không giải thích gì thêm, đúng khung:
+{"keyword": string hoặc null, "minPrice": number hoặc null, "maxPrice": number hoặc null, "categoryName": string hoặc null, "minRating": number hoặc null}
+
+Câu của khách: "${text}"
+
+categoryName chỉ được là một trong các giá trị sau (hoặc null nếu không khớp): ${categoryNames.join(", ")}.
+Giá tính bằng VND. Nếu không chắc một trường, để null.`;
+
+// Loi LLM (het quota, mang, JSON khong doc duoc...) -> quay ve ket qua
+// rule-based da co san, KHONG lam hong ca request tim kiem.
+const refineWithLlm = async (text, categoryNames, fallbackIntent) => {
+  try {
+    const response = await callOpenAi({
+      messages: [{ role: "user", content: buildExtractionPrompt(text, categoryNames) }],
+    });
+    const match = extractText(response).match(/\{[\s\S]*\}/);
+    if (!match) return fallbackIntent;
+    const parsed = JSON.parse(match[0]);
+
+    // QUAN TRONG: field = null (LLM CHU DONG noi "khong can loc theo tieu
+    // chi nay") phai duoc TON TRONG, khac voi field bi THIEU hoan toan (JSON
+    // khong day du) moi quay ve doan rule-based da doan truoc do. Gop chung
+    // hai truong hop (vd dung `?? fallback`) se lam "keyword: null" bi hieu
+    // nham thanh "giu lai keyword rule" - chinh la nguyen nhan AI Search tra
+    // rong du LLM da noi dung la khong can loc keyword.
+    const pick = (key, isValid) => (key in parsed
+      ? (isValid(parsed[key]) ? parsed[key] : undefined)
+      : fallbackIntent[key]);
+
+    return {
+      keyword: pick("keyword", (v) => typeof v === "string" && v.trim().length > 0),
+      minPrice: pick("minPrice", Number.isFinite),
+      maxPrice: pick("maxPrice", Number.isFinite),
+      categoryName: pick("categoryName", (v) => categoryNames.includes(v)),
+      minRating: pick("minRating", Number.isFinite),
+      unsupported: fallbackIntent.unsupported,
+    };
+  } catch (error) {
+    logger.error("AI search refine error:", error.message);
+    return fallbackIntent;
+  }
+};
+
+export const aiSearchFood = async (req, res) => {
+  try {
+    const { q } = req.body || {};
+    if (typeof q !== "string" || !q.trim()) {
+      return res.status(400).json({ success: false, message: "Thiếu câu tìm kiếm" });
+    }
+    if (q.length > MAX_QUERY_LENGTH) {
+      return res.status(400).json({ success: false, message: "Câu tìm kiếm quá dài" });
+    }
+
+    const { rows: categoryRows } = await query("SELECT name FROM categories ORDER BY name");
+    const categoryNames = categoryRows.map((row) => row.name);
+
+    let intent = parseSearchIntent(q, categoryNames);
+    if (intent.needsLlmFallback) {
+      intent = await refineWithLlm(q, categoryNames, intent);
+    }
+
+    const foods = await searchFoods({
+      keyword: intent.keyword,
+      categoryName: intent.categoryName,
+      minPrice: intent.minPrice,
+      maxPrice: intent.maxPrice,
+      minRating: intent.minRating,
+      limit: 20,
+    });
+
+    res.json({
+      success: true,
+      foods: foods.map(mapFood),
+      unsupported: intent.unsupported || [],
+    });
+  } catch (error) {
+    logger.error("AI search food error:", error);
+    res.status(500).json({ success: false, message: "Lỗi khi tìm kiếm bằng AI" });
   }
 };

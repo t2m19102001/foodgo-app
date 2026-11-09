@@ -1,4 +1,4 @@
-import test, { before, after, beforeEach } from "node:test";
+import test, { before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -22,7 +22,17 @@ before(async () => {
   category = await import("../controllers/categoryController.js");
 });
 beforeEach(async () => { if (hasDb) await resetDb(); });
+afterEach(() => { global.fetch = originalFetch; });
 after(async () => { if (hasDb) await closeDb(); });
+
+const originalFetch = global.fetch;
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "test-key";
+process.env.OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-test-model";
+const llmTextReply = (content) => ({
+  ok: true, status: 200,
+  json: async () => ({ choices: [{ message: { role: "assistant", content } }] }),
+  text: async () => "",
+});
 
 test("listFood without page/limit keeps the old response shape under a hard cap", { skip }, async () => {
   const categoryId = await makeCategory();
@@ -96,6 +106,62 @@ test("getFoodByCategory loc theo ten danh muc", { skip }, async () => {
   assert.equal(response.body.foods[0].name, "Cơm gà");
 });
 
+test("addFood dung prepTimeMinutes gui len, hoac default 15 khi khong gui", { skip }, async () => {
+  const categoryLabel = "Mon chinh";
+  await makeCategory(categoryLabel);
+
+  const withValue = makeResponse();
+  await food.addFood({
+    body: { name: "Phở bò", category: categoryLabel, price: "50000", prepTimeMinutes: "25" },
+    file: { filename: `${randomUUID()}.jpg` },
+  }, withValue);
+  assert.equal(withValue.statusCode, 201);
+  assert.equal(withValue.body.food.prepTimeMinutes, 25);
+
+  const withoutValue = makeResponse();
+  await food.addFood({
+    body: { name: "Cơm gà", category: categoryLabel, price: "50000" },
+    file: { filename: `${randomUUID()}.jpg` },
+  }, withoutValue);
+  assert.equal(withoutValue.statusCode, 201);
+  assert.equal(withoutValue.body.food.prepTimeMinutes, 15, "default khi khong gui");
+});
+
+test("addFood/updateFood tu choi prepTimeMinutes ngoai khoang 1-180", { skip }, async () => {
+  const categoryLabel = "Mon chinh";
+  const categoryId = await makeCategory(categoryLabel);
+
+  for (const bad of ["0", "181", "-5", "abc"]) {
+    const added = makeResponse();
+    await food.addFood({
+      body: { name: "Phở bò", category: categoryLabel, price: "50000", prepTimeMinutes: bad },
+      file: { filename: `${randomUUID()}.jpg` },
+    }, added);
+    assert.equal(added.statusCode, 400, `addFood voi prepTimeMinutes=${bad}`);
+  }
+
+  const foodId = await makeFood(categoryId);
+  for (const bad of ["0", "181", "-5"]) {
+    const updated = makeResponse();
+    await food.updateFood({ params: { id: foodId }, body: { prepTimeMinutes: bad } }, updated);
+    assert.equal(updated.statusCode, 400, `updateFood voi prepTimeMinutes=${bad}`);
+  }
+});
+
+test("updateFood doi prepTimeMinutes, giu nguyen khi khong gui", { skip }, async () => {
+  const foodId = await makeFood(await makeCategory(), { prepTimeMinutes: 15 });
+
+  const changed = makeResponse();
+  await food.updateFood({ params: { id: foodId }, body: { prepTimeMinutes: "40" } }, changed);
+  assert.equal(changed.statusCode, 200);
+  assert.equal(changed.body.food.prepTimeMinutes, 40);
+
+  const untouched = makeResponse();
+  await food.updateFood({ params: { id: foodId }, body: { isAvailable: "false" } }, untouched);
+  assert.equal(untouched.statusCode, 200);
+  assert.equal(untouched.body.food.prepTimeMinutes, 40, "khong gui prepTimeMinutes thi giu gia tri cu");
+});
+
 test("updateFood rejects an invalid isAvailable value", { skip }, async () => {
   const foodId = await makeFood(await makeCategory());
   const response = makeResponse();
@@ -115,6 +181,71 @@ test("updateFood toggles isAvailable when a valid value is provided", { skip }, 
   const on = makeResponse();
   await food.updateFood({ params: { id: foodId }, body: { isAvailable: "true" } }, on);
   assert.equal(on.body.food.isAvailable, true);
+});
+
+test("aiSearchFood tra 400 khi thieu hoac qua dai cau tim", { skip }, async () => {
+  const empty = makeResponse();
+  await food.aiSearchFood({ body: { q: "" } }, empty);
+  assert.equal(empty.statusCode, 400);
+
+  const tooLong = makeResponse();
+  await food.aiSearchFood({ body: { q: "a".repeat(201) } }, tooLong);
+  assert.equal(tooLong.statusCode, 400);
+});
+
+test("aiSearchFood loc dung theo gia bang rule, khong can goi LLM", { skip }, async () => {
+  const categoryId = await makeCategory();
+  const re = await makeFood(categoryId, { name: "Mon re", price: 30000 });
+  await makeFood(categoryId, { name: "Mon dat", price: 100000 });
+
+  let fetchCalled = false;
+  global.fetch = async () => { fetchCalled = true; throw new Error("khong duoc goi LLM"); };
+
+  const response = makeResponse();
+  await food.aiSearchFood({ body: { q: "Có món nào dưới 50k không" } }, response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(fetchCalled, false, "cau don gian rule tu xu ly duoc, khong can LLM");
+  assert.deepEqual(response.body.foods.map((f) => f._id), [re]);
+});
+
+test("aiSearchFood tra unsupported khi phat hien tieu chi chua ho tro (khuyen mai)", { skip }, async () => {
+  await makeFood(await makeCategory());
+  const response = makeResponse();
+  await food.aiSearchFood({ body: { q: "Có quán nào đang giảm giá không?" } }, response);
+  assert.equal(response.statusCode, 200);
+  assert.ok(response.body.unsupported.includes("promotion"));
+});
+
+test("aiSearchFood goi LLM fallback khi cau phuc tap, dung dung filter LLM tra ve", { skip }, async () => {
+  const categoryId = await makeCategory();
+  const re = await makeFood(categoryId, { name: "Mon re", price: 45000 });
+  await makeFood(categoryId, { name: "Mon dat", price: 150000 });
+
+  let fetchCalled = false;
+  // "it dau mo, khong cay, gia re" la 6 tu CO NGHIA (sau khi loai stopword) ->
+  // vuot nguong, rule tu bao needsLlmFallback=true (da xac nhan o searchIntent.test.js)
+  global.fetch = async () => {
+    fetchCalled = true;
+    return llmTextReply('```json\n{"keyword": null, "maxPrice": 50000}\n```');
+  };
+
+  const response = makeResponse();
+  await food.aiSearchFood(
+    { body: { q: "Tôi muốn đồ ăn ít dầu mỡ, không cay, giá rẻ" } }, response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(fetchCalled, true, "cau phuc tap phai goi LLM fallback");
+  assert.deepEqual(response.body.foods.map((f) => f._id), [re]);
+});
+
+test("aiSearchFood: LLM loi van tra 200 voi ket qua rule-based, khong vo request", { skip }, async () => {
+  await makeFood(await makeCategory());
+  global.fetch = async () => { throw new Error("network down"); };
+
+  const response = makeResponse();
+  await food.aiSearchFood(
+    { body: { q: "Tôi muốn đồ ăn ít dầu mỡ, không cay, giá rẻ" } }, response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.success, true);
 });
 
 test("sua mon that bai thi giu anh cu va xoa anh moi vua upload", { skip }, async () => {

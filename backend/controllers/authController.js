@@ -1,12 +1,15 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import validator from "validator";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomInt, createHash } from "node:crypto";
 import { query, withTransaction } from "../db/index.js";
 import { HttpError, sendHttpError } from "../util/httpError.js";
 import { mapUser } from "../db/mappers.js";
 import { deleteImageSafe } from "../util/uploadFile.js";
+import { listDriverUsers } from "../db/orders.js";
+import { isUuid } from "../util/ids.js";
 import logger from "../util/logger.js";
+import { sendPasswordResetEmail } from "../util/mailer.js";
 
 const createToken = (id, isAdmin = false, tokenVersion = 0) => {
   return jwt.sign({ id, isAdmin, tokenVersion }, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -35,7 +38,7 @@ export const registerUser = async (req, res) => {
       `INSERT INTO users (name, email, password, phone)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (email) DO NOTHING
-       RETURNING id, name, is_admin, token_version`,
+       RETURNING id, name, is_admin, is_driver, token_version`,
       [String(name).trim(), email.toLowerCase().trim(), hashedPassword, phone || ""]
     );
 
@@ -53,6 +56,7 @@ export const registerUser = async (req, res) => {
       userId: user.id,
       name: user.name,
       isAdmin: user.is_admin,
+      isDriver: user.is_driver,
     });
   } catch (error) {
     logger.error("Register error:", error);
@@ -69,7 +73,7 @@ export const loginUser = async (req, res) => {
     }
 
     const { rows } = await query(
-      `SELECT id, name, password, image, is_admin, is_active, token_version
+      `SELECT id, name, password, image, is_admin, is_driver, is_active, token_version
        FROM users WHERE email = $1`,
       [email.toLowerCase().trim()]
     );
@@ -97,6 +101,7 @@ export const loginUser = async (req, res) => {
       token,
       userId: user.id,
       isAdmin: user.is_admin,
+      isDriver: user.is_driver,
       name: user.name,
       image: user.image || "",
     });
@@ -109,7 +114,7 @@ export const loginUser = async (req, res) => {
 export const getProfile = async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT id, name, email, phone, address, image, is_admin, is_active,
+      `SELECT id, name, email, phone, address, image, is_admin, is_driver, is_active,
               created_at, updated_at
        FROM users WHERE id = $1`,
       [req.userId]
@@ -137,7 +142,7 @@ export const updateProfile = async (req, res) => {
          address = COALESCE($4, address),
          image   = COALESCE($5, image)
        WHERE id = $1
-       RETURNING id, name, email, phone, address, image, is_admin, is_active,
+       RETURNING id, name, email, phone, address, image, is_admin, is_driver, is_active,
                  created_at, updated_at,
                  (SELECT image FROM users WHERE id = $1) AS old_image`,
       [
@@ -241,12 +246,12 @@ export const deleteAccount = async (req, res) => {
         throw new HttpError(400, "Mật khẩu không chính xác");
       }
 
-      // Don dang xu ly that (COD, hoac VNPay da tra tien) va don cho hoan tien
+      // Don dang xu ly that (COD, hoac VNPay/ZaloPay da tra tien) va don cho hoan tien
       const blocking = await client.query(
         `SELECT count(*)::int AS n FROM orders
          WHERE user_id = $1
            AND ((status IN ('pending', 'confirmed', 'shipped')
-                 AND (payment_method <> 'vnpay' OR payment_status = 'paid'))
+                 AND (payment_method NOT IN ('vnpay', 'zalopay') OR payment_status = 'paid'))
                 OR (refund_required AND payment_status <> 'refunded'))`,
         [req.userId]
       );
@@ -255,12 +260,12 @@ export const deleteAccount = async (req, res) => {
           "Bạn còn đơn hàng đang xử lý hoặc khoản tiền chờ hoàn. Vui lòng đợi hoàn tất rồi xóa tài khoản.");
       }
 
-      // Don VNPay chua thanh toan: huy va tra lai ton kho. Gop so luong theo
-      // mon truoc khi cong: UPDATE ... FROM chi cap nhat moi dong foods MOT lan
-      // du khop nhieu dong order_items.
+      // Don VNPay/ZaloPay chua thanh toan: huy va tra lai ton kho. Gop so luong
+      // theo mon truoc khi cong: UPDATE ... FROM chi cap nhat moi dong foods
+      // MOT lan du khop nhieu dong order_items.
       const abandoned = await client.query(
         `UPDATE orders SET status = 'cancelled', cancel_reason = 'Tài khoản đã bị xóa'
-         WHERE user_id = $1 AND payment_method = 'vnpay' AND status = 'pending'
+         WHERE user_id = $1 AND payment_method IN ('vnpay', 'zalopay') AND status = 'pending'
            AND payment_status <> 'paid'
          RETURNING id`,
         [req.userId]
@@ -311,5 +316,146 @@ export const deleteAccount = async (req, res) => {
   } catch (error) {
     sendHttpError(res, error, "Lỗi hệ thống khi xóa tài khoản",
       (e) => logger.error("Delete account error:", e));
+  }
+};
+
+// =============================================== Quen mat khau
+//
+// Ma OTP 6 so gui qua email, het han 15 phut, dung duoc 1 lan. Khong tiet lo
+// email co ton tai hay khong (cung tinh than voi loginUser): luon tra ve cung
+// thong bao, chi gui mail THAT khi tai khoan ton tai.
+const RESET_CODE_TTL_MINUTES = 15;
+const hashResetCode = (code) => createHash("sha256").update(code).digest("hex");
+const generateResetCode = () => String(randomInt(0, 1000000)).padStart(6, "0");
+
+export const requestPasswordReset = async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (typeof email !== "string" || !validator.isEmail(email)) {
+      return res.status(400).json({ success: false, message: "Email không hợp lệ" });
+    }
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const { rows } = await query(
+      "SELECT id, name FROM users WHERE email = $1 AND deleted_at IS NULL",
+      [normalizedEmail]
+    );
+    const user = rows[0];
+
+    if (user) {
+      const code = generateResetCode();
+      await query(
+        `INSERT INTO password_reset_codes (user_id, code_hash, expires_at)
+         VALUES ($1, $2, now() + interval '${RESET_CODE_TTL_MINUTES} minutes')`,
+        [user.id, hashResetCode(code)]
+      );
+      try {
+        await sendPasswordResetEmail(normalizedEmail, user.name, code);
+      } catch (mailError) {
+        // Khong tra loi cho client o day - se lo email nao gui that duoc.
+        // Loi gui mail duoc ghi log de admin biet SMTP co van de.
+        logger.error("Send password reset email error:", mailError.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: "Nếu email tồn tại trong hệ thống, mã xác nhận đã được gửi tới email của bạn",
+    });
+  } catch (error) {
+    logger.error("Request password reset error:", error);
+    res.status(500).json({ success: false, message: "Lỗi hệ thống khi yêu cầu đặt lại mật khẩu" });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body || {};
+    if (typeof email !== "string" || !validator.isEmail(email)
+        || typeof code !== "string" || !/^\d{6}$/.test(code)
+        || typeof newPassword !== "string" || newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: "Thông tin không hợp lệ" });
+    }
+    const normalizedEmail = email.toLowerCase().trim();
+
+    await withTransaction(async (client) => {
+      const { rows: userRows } = await client.query(
+        "SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL",
+        [normalizedEmail]
+      );
+      const user = userRows[0];
+      // Thong bao chung cho "khong co tai khoan" va "ma sai/het han" - khong
+      // tiet lo email nao da dang ky.
+      if (!user) throw new HttpError(400, "Mã xác nhận không đúng hoặc đã hết hạn");
+
+      const { rows: codeRows } = await client.query(
+        `SELECT id FROM password_reset_codes
+         WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL AND expires_at > now()
+         ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+        [user.id, hashResetCode(code)]
+      );
+      const resetCode = codeRows[0];
+      if (!resetCode) throw new HttpError(400, "Mã xác nhận không đúng hoặc đã hết hạn");
+
+      const hashed = await bcrypt.hash(newPassword, await bcrypt.genSalt(10));
+      // token_version tang len lam moi token da phat truoc do het hieu luc,
+      // giong luc doi mat khau binh thuong
+      await client.query(
+        "UPDATE users SET password = $2, token_version = token_version + 1 WHERE id = $1",
+        [user.id, hashed]
+      );
+      await client.query("UPDATE password_reset_codes SET used_at = now() WHERE id = $1", [resetCode.id]);
+    });
+
+    res.json({ success: true, message: "Đặt lại mật khẩu thành công, vui lòng đăng nhập lại" });
+  } catch (error) {
+    sendHttpError(res, error, "Lỗi hệ thống khi đặt lại mật khẩu",
+      (e) => logger.error("Reset password error:", e));
+  }
+};
+
+// =============================================== Location Sharing (admin)
+//
+// Khong co luong "dang ky lam tai xe" rieng (ban nhe) - tai xe la 1 user
+// THUONG da dang ky, admin "thang cap" bang cach bat is_driver. Dung lai
+// endpoint dang ky/dang nhap hien co, khong them luong auth moi.
+
+// Danh sach cho dropdown "Gan tai xe" trong admin (OrderDetailActivity)
+export const listDrivers = async (req, res) => {
+  try {
+    const { rows } = await listDriverUsers();
+    res.json({ success: true, drivers: rows.map((row) => ({ _id: row.id, name: row.name, email: row.email })) });
+  } catch (error) {
+    logger.error("List drivers error:", error);
+    res.status(500).json({ success: false, message: "Lỗi khi lấy danh sách tài xế" });
+  }
+};
+
+export const setDriverFlag = async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Mã người dùng không hợp lệ" });
+    }
+    const { isDriver } = req.body || {};
+    if (typeof isDriver !== "boolean") {
+      return res.status(400).json({ success: false, message: "Thiếu trường isDriver" });
+    }
+
+    const { rows } = await query(
+      "UPDATE users SET is_driver = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING id, name, is_driver",
+      [req.params.id, isDriver]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy người dùng" });
+    }
+
+    res.json({
+      success: true,
+      message: isDriver ? "Đã cấp quyền tài xế" : "Đã thu hồi quyền tài xế",
+      user: { _id: rows[0].id, name: rows[0].name, isDriver: rows[0].is_driver },
+    });
+  } catch (error) {
+    logger.error("Set driver flag error:", error);
+    res.status(500).json({ success: false, message: "Lỗi khi cập nhật quyền tài xế" });
   }
 };

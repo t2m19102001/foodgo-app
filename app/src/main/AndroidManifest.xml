@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Chi dinh vi KHI DANG MO APP (foreground) - khong xin ACCESS_BACKGROUND_LOCATION,
+         xem gioi han da ghi trong plan Location Sharing -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application
         android:name=".DeliveryApp"
@@ -15,6 +19,10 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
         android:theme="@style/Theme.TranMinhMan_LeNgocNhan_DoAn">
+
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
         <activity
             android:name=".ui.auth.SplashActivity"
             android:exported="true"
@@ -34,6 +42,14 @@
             android:name=".ui.auth.RegisterActivity"
             android:exported="false"
             android:theme="@style/Theme.App.Brand"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.auth.ForgotPasswordActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.auth.ResetPasswordActivity"
+            android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.main.MainActivity"
@@ -73,6 +89,19 @@
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.notification.NotificationActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.chat.ChatActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.map.MapPickerActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.map.DeliveryMapActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.driver.DriverOrdersActivity"
             android:exported="false" />
         <activity
             android:name=".ui.address.AddressListActivity"

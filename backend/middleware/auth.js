@@ -42,7 +42,7 @@ export const authMiddleware = async (req, res, next) => {
   try {
     // Goi qua object db (khong import { query }) de test thay duoc ham query
     const { rows } = await db.query(
-      "SELECT is_active, is_admin, token_version, deleted_at FROM users WHERE id = $1",
+      "SELECT is_active, is_admin, is_driver, token_version, deleted_at FROM users WHERE id = $1",
       [decoded.id]
     );
     user = rows[0];
@@ -66,7 +66,7 @@ export const authMiddleware = async (req, res, next) => {
   }
 
   req.userId = decoded.id;
-  req.user = { id: decoded.id, isAdmin: user.is_admin };
+  req.user = { id: decoded.id, isAdmin: user.is_admin, isDriver: user.is_driver };
   next();
 };
 
@@ -77,6 +77,15 @@ export const requireAdmin = (req, res, next) => {
   next();
 };
 
+// Location Sharing (ban nhe) - xem migration 011_driver_location.sql
+export const requireDriver = (req, res, next) => {
+  if (!req.user?.isDriver) {
+    return res.status(403).json({ success: false, message: "Yêu cầu quyền tài xế" });
+  }
+  next();
+};
+
 // Giu lai ten cu de router khong phai doi: ban Mongo goi long authMiddleware roi
 // truyen callback lam next. Gio tach thanh hai middleware chay noi tiep.
 export const adminMiddleware = [authMiddleware, requireAdmin];
+export const driverMiddleware = [authMiddleware, requireDriver];

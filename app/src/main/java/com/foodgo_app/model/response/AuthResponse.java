@@ -8,6 +8,7 @@ public class AuthResponse {
     private String name;
     private String image;
     private boolean isAdmin;
+    private boolean isDriver;
 
     public boolean isSuccess() { return success; }
     public String getMessage() { return message; }
@@ -16,4 +17,5 @@ public class AuthResponse {
     public String getName() { return name; }
     public String getImage() { return image; }
     public boolean isAdmin() { return isAdmin; }
+    public boolean isDriver() { return isDriver; }
 }

@@ -36,6 +36,7 @@ public class LoginActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progress_bar);
         btnLogin = findViewById(R.id.btn_login);
         TextView textGoRegister = findViewById(R.id.text_go_register);
+        TextView textGoForgotPassword = findViewById(R.id.text_go_forgot_password);
 
         btnLogin.setOnClickListener(v -> viewModel.login(
                 editEmail.getText() != null ? editEmail.getText().toString() : "",
@@ -44,6 +45,9 @@ public class LoginActivity extends AppCompatActivity {
 
         textGoRegister.setOnClickListener(v ->
                 startActivity(new Intent(this, RegisterActivity.class)));
+
+        textGoForgotPassword.setOnClickListener(v ->
+                startActivity(new Intent(this, ForgotPasswordActivity.class)));
 
         observeViewModel();
     }

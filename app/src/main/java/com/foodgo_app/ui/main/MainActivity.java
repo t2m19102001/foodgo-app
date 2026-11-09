@@ -2,6 +2,7 @@ package com.foodgo_app.ui.main;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
 
@@ -20,6 +21,7 @@ import com.foodgo_app.model.response.NotificationListResponse;
 import com.foodgo_app.repository.CartRepository;
 import com.foodgo_app.repository.NotificationRepository;
 import com.foodgo_app.ui.cart.CartActivity;
+import com.foodgo_app.ui.chat.ChatActivity;
 import com.foodgo_app.ui.home.HomeFragment;
 import com.foodgo_app.ui.notification.NotificationActivity;
 import com.foodgo_app.ui.order.OrderHistoryFragment;
@@ -65,6 +67,11 @@ public class MainActivity extends AppCompatActivity {
                 startActivity(new Intent(this, CartActivity.class)));
 
         bottomNav = findViewById(R.id.bottom_nav);
+
+        View fabChat = findViewById(R.id.fab_chat);
+        fabChat.setOnClickListener(v ->
+                startActivity(new Intent(this, ChatActivity.class)));
+        setupDraggableFab(fabChat);
 
         FragmentManager fm = getSupportFragmentManager();
 
@@ -164,6 +171,46 @@ public class MainActivity extends AppCompatActivity {
         badge.setBackgroundColor(ContextCompat.getColor(this, R.color.colorPrimary));
         badge.setBadgeTextColor(ContextCompat.getColor(this, R.color.white));
         badge.setVisible(true);
+    }
+
+    // Cho phep keo FAB chat di noi khac, vi vi tri mac dinh (bottom|end) hay de len
+    // icon "Thong bao" tren bottom nav o man hinh nho. Tap binh thuong (khong keo) van mo chat.
+    private void setupDraggableFab(@NonNull View fab) {
+        float tolerance = 8 * getResources().getDisplayMetrics().density;
+        fab.setOnTouchListener(new View.OnTouchListener() {
+            private float dX, dY, downRawX, downRawY;
+
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                View parent = (View) view.getParent();
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downRawX = event.getRawX();
+                        downRawY = event.getRawY();
+                        dX = view.getX() - downRawX;
+                        dY = view.getY() - downRawY;
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        float newX = Math.max(0, Math.min(event.getRawX() + dX,
+                                parent.getWidth() - view.getWidth()));
+                        float newY = Math.max(0, Math.min(event.getRawY() + dY,
+                                parent.getHeight() - view.getHeight()));
+                        view.setX(newX);
+                        view.setY(newY);
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        boolean isClick = Math.abs(event.getRawX() - downRawX) < tolerance
+                                && Math.abs(event.getRawY() - downRawY) < tolerance;
+                        if (isClick) {
+                            view.performClick();
+                        }
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+        });
     }
 
     private Fragment fragmentForTab(int tabId) {

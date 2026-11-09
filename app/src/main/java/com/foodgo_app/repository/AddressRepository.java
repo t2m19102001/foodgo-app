@@ -23,12 +23,14 @@ public class AddressRepository {
         return apiService.getMyAddresses();
     }
 
-    public Call<AddressResponse> addAddress(String fullName, String phone, String address, String note, boolean isDefault) {
-        return apiService.addAddress(new SaveAddressRequest(fullName, phone, address, note, isDefault));
+    public Call<AddressResponse> addAddress(String fullName, String phone, String address, String note,
+                                             boolean isDefault, Double lat, Double lng) {
+        return apiService.addAddress(new SaveAddressRequest(fullName, phone, address, note, isDefault, lat, lng));
     }
 
-    public Call<AddressResponse> updateAddress(String id, String fullName, String phone, String address, String note) {
-        return apiService.updateAddress(id, new SaveAddressRequest(fullName, phone, address, note, false));
+    public Call<AddressResponse> updateAddress(String id, String fullName, String phone, String address, String note,
+                                                Double lat, Double lng) {
+        return apiService.updateAddress(id, new SaveAddressRequest(fullName, phone, address, note, false, lat, lng));
     }
 
     public Call<AddressResponse> setDefaultAddress(String id) {

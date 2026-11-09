@@ -1,11 +1,14 @@
 package com.foodgo_app.ui.address;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.CheckBox;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.lifecycle.ViewModelProvider;
@@ -15,6 +18,7 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.google.gson.Gson;
 import com.foodgo_app.R;
 import com.foodgo_app.model.SavedAddress;
+import com.foodgo_app.ui.map.MapPickerActivity;
 
 public class AddEditAddressActivity extends AppCompatActivity {
 
@@ -27,8 +31,31 @@ public class AddEditAddressActivity extends AppCompatActivity {
     private TextInputEditText editNote;
     private CheckBox checkboxDefault;
     private TextView textError;
+    private TextView textMapPicked;
     private android.widget.ProgressBar progressBar;
     private MaterialButton btnSubmit;
+    // null = chua chon tren ban do - van hop le, dia chi van gui duoc chi
+    // khong co toa do kem theo
+    private Double pickedLat;
+    private Double pickedLng;
+
+    private final ActivityResultLauncher<Intent> mapPickerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), result -> {
+                if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
+                Intent data = result.getData();
+                pickedLat = data.getDoubleExtra("lat", Double.NaN);
+                pickedLng = data.getDoubleExtra("lng", Double.NaN);
+                if (Double.isNaN(pickedLat) || Double.isNaN(pickedLng)) {
+                    pickedLat = null;
+                    pickedLng = null;
+                    return;
+                }
+                String pickedAddress = data.getStringExtra("address");
+                if (pickedAddress != null && !pickedAddress.isEmpty()) {
+                    editAddress.setText(pickedAddress);
+                }
+                textMapPicked.setVisibility(View.VISIBLE);
+            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -50,6 +77,7 @@ public class AddEditAddressActivity extends AppCompatActivity {
         editNote = findViewById(R.id.edit_note);
         checkboxDefault = findViewById(R.id.checkbox_default);
         textError = findViewById(R.id.text_error);
+        textMapPicked = findViewById(R.id.text_map_picked);
         progressBar = findViewById(R.id.progress_bar);
         btnSubmit = findViewById(R.id.btn_submit);
 
@@ -60,7 +88,21 @@ public class AddEditAddressActivity extends AppCompatActivity {
             editNote.setText(editingAddress.getNote());
             // Dat lam mac dinh chi thao tac tu man danh sach, khong sua qua form Edit
             checkboxDefault.setVisibility(View.GONE);
+            if (editingAddress.hasCoordinates()) {
+                pickedLat = editingAddress.getLat();
+                pickedLng = editingAddress.getLng();
+                textMapPicked.setVisibility(View.VISIBLE);
+            }
         }
+
+        findViewById(R.id.btn_pick_on_map).setOnClickListener(v -> {
+            Intent intent = new Intent(this, MapPickerActivity.class);
+            if (pickedLat != null && pickedLng != null) {
+                intent.putExtra("lat", pickedLat);
+                intent.putExtra("lng", pickedLng);
+            }
+            mapPickerLauncher.launch(intent);
+        });
 
         viewModel = new ViewModelProvider(this).get(AddressViewModel.class);
 
@@ -70,9 +112,11 @@ public class AddEditAddressActivity extends AppCompatActivity {
             String addressText = textOf(editAddress);
             String note = textOf(editNote);
             if (editingAddress != null) {
-                viewModel.updateAddress(editingAddress.getId(), fullName, phone, addressText, note);
+                viewModel.updateAddress(editingAddress.getId(), fullName, phone, addressText, note,
+                        pickedLat, pickedLng);
             } else {
-                viewModel.addAddress(fullName, phone, addressText, note, checkboxDefault.isChecked());
+                viewModel.addAddress(fullName, phone, addressText, note, checkboxDefault.isChecked(),
+                        pickedLat, pickedLng);
             }
         });
 

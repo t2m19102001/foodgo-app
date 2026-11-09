@@ -13,4 +13,5 @@ public class Constants {
     public static final String KEY_USER_ID = "userId";
     public static final String KEY_USER_NAME = "userName";
     public static final String KEY_IS_ADMIN = "isAdmin";
+    public static final String KEY_IS_DRIVER = "isDriver";
 }

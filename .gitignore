@@ -28,3 +28,7 @@ backend/uploads/*
 
 # Cau hinh rieng cua IDE
 .vscode/
+
+# SSH key + thong tin deploy server - KHONG duoc commit
+*.pem
+deploy-info.md

@@ -197,3 +197,52 @@ test("dia chi tra ve dung hinh JSON ma app cho doi", { skip }, async () => {
   assert.equal(got.note, "Giao gio trua");
   assert.equal(got.isDefault, true);
 });
+
+test("addAddress luu dung lat/lng khi chon tren ban do, null khi khong chon", { skip }, async () => {
+  const userId = await makeUser();
+
+  const withCoords = makeResponse();
+  await address.addAddress({ userId, body: body({ lat: 10.7769, lng: 106.7009 }) }, withCoords);
+  assert.equal(withCoords.statusCode, 201);
+  assert.equal(withCoords.body.address.lat, 10.7769);
+  assert.equal(withCoords.body.address.lng, 106.7009);
+
+  const withoutCoords = makeResponse();
+  await address.addAddress({ userId, body: body({ address: "2 Duong XYZ" }) }, withoutCoords);
+  assert.equal(withoutCoords.body.address.lat, null);
+  assert.equal(withoutCoords.body.address.lng, null);
+});
+
+test("addAddress/updateAddress tu choi lat/lng ngoai pham vi toa do thuc", { skip }, async () => {
+  const userId = await makeUser();
+
+  for (const bad of [{ lat: 91 }, { lat: -91 }, { lng: 181 }, { lng: -181 }]) {
+    const response = makeResponse();
+    await address.addAddress({ userId, body: body(bad) }, response);
+    assert.equal(response.statusCode, 400, JSON.stringify(bad));
+  }
+
+  const created = makeResponse();
+  await address.addAddress({ userId, body: body() }, created);
+  const addressId = created.body.address._id;
+
+  const updateResponse = makeResponse();
+  await address.updateAddress(
+    { userId, params: { id: addressId }, body: body({ lat: 999 }) }, updateResponse);
+  assert.equal(updateResponse.statusCode, 400);
+});
+
+test("updateAddress cap nhat dung lat/lng moi", { skip }, async () => {
+  const userId = await makeUser();
+  const created = makeResponse();
+  await address.addAddress({ userId, body: body({ lat: 10.7, lng: 106.7 }) }, created);
+  const addressId = created.body.address._id;
+
+  const updated = makeResponse();
+  await address.updateAddress(
+    { userId, params: { id: addressId }, body: body({ address: "Dia chi moi", lat: 21.0, lng: 105.8 }) },
+    updated);
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.body.address.lat, 21.0);
+  assert.equal(updated.body.address.lng, 105.8);
+});

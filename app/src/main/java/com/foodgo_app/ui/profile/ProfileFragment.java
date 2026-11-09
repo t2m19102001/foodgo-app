@@ -26,6 +26,7 @@ import com.foodgo_app.ui.admin.AdminFoodActivity;
 import com.foodgo_app.ui.admin.AdminOrderActivity;
 import com.foodgo_app.ui.admin.AdminStatsActivity;
 import com.foodgo_app.ui.auth.LoginActivity;
+import com.foodgo_app.ui.driver.DriverOrdersActivity;
 import com.foodgo_app.util.Constants;
 import com.foodgo_app.util.ImageUrlHelper;
 import com.foodgo_app.util.SessionManager;
@@ -87,6 +88,13 @@ public class ProfileFragment extends Fragment {
                     startActivity(new Intent(getActivity(), AdminCategoryActivity.class)));
             view.findViewById(R.id.btn_admin_stats).setOnClickListener(v ->
                     startActivity(new Intent(getActivity(), AdminStatsActivity.class)));
+        }
+
+        // Khu vuc tai xe chi mo cho tai khoan isDriver
+        if (new SessionManager(requireContext()).isDriver()) {
+            view.findViewById(R.id.layout_driver).setVisibility(View.VISIBLE);
+            view.findViewById(R.id.btn_driver_orders).setOnClickListener(v ->
+                    startActivity(new Intent(getActivity(), DriverOrdersActivity.class)));
         }
 
         view.findViewById(R.id.btn_logout).setOnClickListener(v -> {

@@ -83,6 +83,67 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- Smart ETA: rule-based, khong co GPS nen "giao hang" la khoang trung
+                 binh - xem backend/util/eta.js. An het khi don chua co eta (dat
+                 truoc migration 006) hoac da huy. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/card_eta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        style="@style/Text.App.Section"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Dự kiến giao hàng" />
+
+                    <TextView
+                        android:id="@+id/text_eta_total"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textColor="@color/colorPrimary"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/text_eta_confirm"
+                        style="@style/Text.App.BodySecondary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp" />
+
+                    <TextView
+                        android:id="@+id/text_eta_prep"
+                        style="@style/Text.App.BodySecondary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" />
+
+                    <TextView
+                        android:id="@+id/text_eta_delivery"
+                        style="@style/Text.App.BodySecondary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" />
+
+                    <TextView
+                        android:id="@+id/text_eta_warning"
+                        style="@style/Text.App.Warning"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <TextView
                 style="@style/Text.App.Section"
                 android:layout_width="wrap_content"
@@ -111,6 +172,17 @@
                 android:id="@+id/step_delivered"
                 style="@style/Text.App.TrackingStep"
                 android:text="Đã giao thành công" />
+
+            <!-- Chi hien khi don co toa do giao hang (module Maps) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_view_map"
+                style="@style/Widget.App.Button.Outlined"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Xem trên bản đồ"
+                android:visibility="gone"
+                app:icon="@drawable/ic_location" />
 
             <TextView
                 android:id="@+id/text_cancelled_notice"

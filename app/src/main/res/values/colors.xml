@@ -25,6 +25,8 @@
     <!-- Feedback -->
     <color name="error">#E5484D</color>
     <color name="error_light">#FDECEC</color>
+    <color name="warning">#B45309</color>
+    <color name="warning_light">#FFF4E0</color>
     <color name="success">#22A45D</color>
     <color name="star">#FFB400</color>
     <color name="unread_dot">#FF6B35</color>

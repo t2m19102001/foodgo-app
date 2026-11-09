@@ -16,6 +16,12 @@ swiperefreshlayout = "1.1.0"
 firebaseBom = "35.1.0"
 googleServices = "4.5.0"
 firebaseCrashlyticsPlugin = "3.0.8"
+# Kiem tra lai ban moi nhat tai maven.google.com truoc khi nang cap - Google
+# Play services doi version thuong xuyen
+playServicesMaps = "20.0.0"
+playServicesLocation = "21.4.0"
+securityCrypto = "1.1.0"
+coreTesting = "2.2.0"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -35,6 +41,10 @@ recyclerview = { group = "androidx.recyclerview", name = "recyclerview", version
 swiperefreshlayout = { group = "androidx.swiperefreshlayout", name = "swiperefreshlayout", version.ref = "swiperefreshlayout" }
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics" }
+play-services-maps = { group = "com.google.android.gms", name = "play-services-maps", version.ref = "playServicesMaps" }
+play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+core-testing = { group = "androidx.arch.core", name = "core-testing", version.ref = "coreTesting" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

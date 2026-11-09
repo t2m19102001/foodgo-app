@@ -6,8 +6,11 @@ import androidx.annotation.Nullable;
 
 import com.foodgo_app.api.ApiClient;
 import com.foodgo_app.api.ApiService;
+import com.foodgo_app.model.response.AiSearchRequest;
+import com.foodgo_app.model.response.AiSearchResponse;
 import com.foodgo_app.model.response.FoodDetailResponse;
 import com.foodgo_app.model.response.FoodListResponse;
+import com.foodgo_app.model.response.HomeRecommendationsResponse;
 import com.foodgo_app.model.response.SimpleResponse;
 import com.foodgo_app.util.MultipartUtils;
 
@@ -32,6 +35,14 @@ public class FoodRepository {
 
     public Call<FoodListResponse> getFoodByCategory(String category) {
         return apiService.getFoodByCategory(category);
+    }
+
+    public Call<AiSearchResponse> aiSearchFood(String query) {
+        return apiService.aiSearchFood(new AiSearchRequest(query));
+    }
+
+    public Call<HomeRecommendationsResponse> getHomeRecommendations() {
+        return apiService.getHomeRecommendations();
     }
 
     // ===== Danh cho admin =====

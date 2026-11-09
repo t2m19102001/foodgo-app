@@ -78,6 +78,26 @@
                             android:maxLines="3" />
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_pick_on_map"
+                        style="@style/Widget.App.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="Chọn vị trí trên bản đồ"
+                        app:icon="@drawable/ic_location" />
+
+                    <!-- Hien khi da chon toa do tren ban do (module Maps) -->
+                    <TextView
+                        android:id="@+id/text_map_picked"
+                        style="@style/Text.App.Caption"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="Đã chọn vị trí trên bản đồ"
+                        android:textColor="@color/success"
+                        android:visibility="gone" />
+
                     <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

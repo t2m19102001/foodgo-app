@@ -11,15 +11,21 @@ import {
   claimPaymentAttempt, insertPaymentAttempt, findPaymentAttempt, insertPaymentLedger,
   markPaymentFailed, markPaymentPaid, markRefundRequired,
   insertNotification,
+  countActiveOrders, insertDeliveryEstimate, recordEstimateActual,
+  findReusableZalopayOrderUrl, findActiveZalopayOrderUrl, insertZalopayTransaction,
+  lockZalopayTransaction, markZalopayTransactionResult,
+  assignOrderDriver,
 } from "../db/orders.js";
 import { buildPaymentUrl, verifySignature } from "../util/vnpay.js";
+import { createOrder as createZalopayOrder, verifyCallbackMac as verifyZalopayMac, ZaloPayError } from "../util/zalopay.js";
+import { calcEta, addMinutes, detectEtaDelay } from "../util/eta.js";
 import { parseOrderPagination } from "../util/pagination.js";
 import { isUuid } from "../util/ids.js";
 import { HttpError, badRequest, sendHttpError } from "../util/httpError.js";
 import { invalidUuid, invalidOptionalText, invalidInt, firstProblem } from "../util/validate.js";
 import logger from "../util/logger.js";
 
-const VALID_PAYMENT_METHODS = ["cod", "vnpay"];
+const VALID_PAYMENT_METHODS = ["cod", "vnpay", "zalopay"];
 const VALID_STATUSES = ["pending", "confirmed", "shipped", "delivered", "cancelled"];
 const NEXT_STATUSES = {
   pending: ["confirmed", "cancelled"],
@@ -72,6 +78,35 @@ const notifyOrderStatus = (userId, orderId, status, client) => {
   return insertNotification(client, userId, "Cập nhật đơn hàng", `${message} (#${shortCode(orderId)})`);
 };
 
+// Smart ETA (rule-based, xem util/eta.js): chi don con 'pending' moi duoc
+// tinh lai - don da 'confirmed'/'shipped' xem nhu nha hang da cam ket, giu
+// nguyen baseline. Dung CHUNG mot query dem tai cho ca danh sach (khong tinh
+// rieng tai tru chinh don dang xet) - du chinh xac voi muc do "canh bao" rule
+// -based, khong can tuyet doi.
+const attachEtaWarnings = async (rows, orders) => {
+  const pendingIdx = [];
+  rows.forEach((row, i) => {
+    if (row.status === "pending" && orders[i] && orders[i].eta) pendingIdx.push(i);
+  });
+  if (pendingIdx.length === 0) return orders;
+
+  const freshActiveOrdersCount = await countActiveOrders();
+  for (const i of pendingIdx) {
+    const row = rows[i];
+    const order = orders[i];
+    const { delayed, diffMinutes } = detectEtaDelay(order.eta.estimatedDeliveredAt, {
+      prepBaseMinutes: row.eta_prep_base_minutes,
+      freshActiveOrdersCount,
+      confirmMinutes: order.eta.confirmMinutes,
+      deliveryMinutes: order.eta.deliveryMinutes,
+      createdAt: order.createdAt,
+    });
+    order.eta.delayed = delayed;
+    order.eta.delayMinutes = delayed ? diffMinutes : 0;
+  }
+  return orders;
+};
+
 export const placeOrder = async (req, res) => {
   try {
     const { items, address, clientRequestId, paymentMethod } = req.body || {};
@@ -97,6 +132,13 @@ export const placeOrder = async (req, res) => {
       // thong diep, nen tach thanh bon loi goi invalidText chi de lap lai
       // message bon lan - khong ro hon, lai de sai cho note (null la hop le).
       return badRequest(res, "Thiếu địa chỉ giao hàng");
+    }
+    // lat/lng optional (chon tren ban do - module Maps), khong bat buoc
+    if ((address.lat !== undefined && address.lat !== null
+          && !(Number.isFinite(Number(address.lat)) && Number(address.lat) >= -90 && Number(address.lat) <= 90))
+        || (address.lng !== undefined && address.lng !== null
+          && !(Number.isFinite(Number(address.lng)) && Number(address.lng) >= -180 && Number(address.lng) <= 180))) {
+      return badRequest(res, "Toạ độ giao hàng không hợp lệ");
     }
 
     // Gop cac dong trung foodId va chuan hoa so luong truoc khi doi chieu voi DB
@@ -169,6 +211,21 @@ export const placeOrder = async (req, res) => {
       }
 
       await setOrderAmount(client, orderId, amount);
+
+      // Smart ETA: tinh baseline MOT LAN luc dat hang (xem util/eta.js).
+      // excludeOrderId = chinh don nay - da duoc INSERT o tren voi status
+      // 'pending' nen se tu tinh vao tai cua no neu khong tru ra.
+      const createdAt = new Date();
+      const eta = calcEta(
+        foods.map((food) => ({ prepTimeMinutes: food.prep_time_minutes })),
+        await countActiveOrders(client, orderId)
+      );
+      await insertDeliveryEstimate(client, orderId, {
+        ...eta,
+        estimatedReadyAt: addMinutes(createdAt, eta.confirmMinutes + eta.prepMinutes),
+        estimatedDeliveredAt: addMinutes(createdAt, eta.totalMinutes),
+      });
+
       await recordStatusChange(client, orderId, null, "pending", "customer", req.userId);
 
       // Chi bao "dat hang thanh cong" ngay cho COD - khong qua cong thanh toan
@@ -193,29 +250,33 @@ export const placeOrder = async (req, res) => {
       if (existing.request_fingerprint !== requestFingerprint) {
         return res.status(409).json({ success: false, message: "Mã yêu cầu đã dùng cho đơn hàng khác" });
       }
-      // Don VNPay gui lai ma CHUA thanh toan: tra lai payUrl dang con han
-      // (KHONG cap txnRef moi - xem getOrIssuePayUrl), hoac cap lan thanh toan
-      // moi neu lan truoc da that bai/het han. Don da het han/huy -> 410 de app
-      // xoa yeu cau dang cho va cho dat lai.
-      if (existing.payment_method === "vnpay" && existing.payment_status !== "paid") {
+      // Don VNPay/ZaloPay gui lai ma CHUA thanh toan: tra lai URL thanh toan
+      // dang con han, hoac cap lan thanh toan moi neu lan truoc da that
+      // bai/het han. Don da het han/huy -> 410 de app xoa yeu cau dang cho
+      // va cho dat lai.
+      if (["vnpay", "zalopay"].includes(existing.payment_method) && existing.payment_status !== "paid") {
         if (existing.status === "cancelled") {
           return res.status(410).json({ success: false, message: EXPIRED_MESSAGE });
         }
-        const payUrl = await getOrIssuePayUrl(existing, req.ip);
-        return res.json({ success: true, message: "Vui lòng hoàn tất thanh toán VNPay", payUrl });
+        const payUrl = existing.payment_method === "vnpay"
+          ? await getOrIssuePayUrl(existing, req.ip)
+          : await getOrIssueZaloPayOrder(existing);
+        return res.json({ success: true, message: "Vui lòng hoàn tất thanh toán", payUrl });
       }
       const order = toOrder(existing);
       return res.json({ success: true, message: "Đơn hàng đã được tạo", orderId: order._id, order });
     }
 
-    if (result.paymentMethod === "vnpay") {
+    if (result.paymentMethod === "vnpay" || result.paymentMethod === "zalopay") {
       // KHONG tra orderId/order o day - day chinh la cho sua bug "bam Dat hang
       // la thay da dat hang xong roi moi hien man thanh toan". Server da tao
       // va giu cho don (tru kho, chiem khoa idempotency) nhung client khong
       // biet no ton tai; don chi "xuat hien" (GET /my, thong bao) sau khi
-      // VNPay bao thanh toan thanh cong trong processVnpayResult.
-      const payUrl = await getOrIssuePayUrl(result.order, req.ip);
-      return res.json({ success: true, message: "Vui lòng hoàn tất thanh toán VNPay", payUrl });
+      // cong thanh toan bao thanh cong qua callback.
+      const payUrl = result.paymentMethod === "vnpay"
+        ? await getOrIssuePayUrl(result.order, req.ip)
+        : await getOrIssueZaloPayOrder(result.order);
+      return res.json({ success: true, message: "Vui lòng hoàn tất thanh toán", payUrl });
     }
 
     const order = toOrder(result.order);
@@ -261,6 +322,34 @@ const getOrIssuePayUrl = async (order, ip) => {
     await insertPaymentAttempt(client, { txnRef, orderId: order.id, amount, payUrl, expiresAt });
   });
   return payUrl;
+};
+
+// Tra ve order_url cho mot don ZaloPay chua thanh toan - cung tinh than
+// getOrIssuePayUrl (tai su dung url con han truoc khi cap moi), nhung ZaloPay
+// can GOI API THAT de tao don (khac VNPay tu build URL khong can goi mang).
+const getOrIssueZaloPayOrder = async (order) => {
+  const reusable = await findReusableZalopayOrderUrl(order.id);
+  if (reusable) return reusable;
+
+  let created;
+  try {
+    created = await createZalopayOrder({
+      orderId: order.id,
+      amount: order.amount,
+      description: `Thanh toan don hang ${shortCode(order.id)}`,
+    });
+  } catch (error) {
+    if (error instanceof ZaloPayError) throw new HttpError(502, "Không tạo được đơn thanh toán ZaloPay, vui lòng thử lại");
+    throw error;
+  }
+
+  const expiresAt = new Date(Date.now() + PAYMENT_TTL_MINUTES * 60 * 1000);
+  await withTransaction(async (client) => {
+    await insertZalopayTransaction(client, {
+      orderId: order.id, appTransId: created.appTransId, orderUrl: created.orderUrl, expiresAt,
+    });
+  });
+  return created.orderUrl;
 };
 
 // Danh dau don can hoan tien khi tien ve ma KHONG the ghi nhan la paid: don
@@ -380,6 +469,7 @@ const processVnpayResult = async (vnpQuery, source) => {
       await setOrderStatus(client, order.id, "confirmed");
       await recordStatusChange(client, order.id, "pending", "confirmed", "system", null,
         "Thanh toan VNPay thanh cong");
+      await recordEstimateActual(client, order.id, "confirmed");
     }
 
     // Voi VNPay day la thong bao DAU TIEN ma khach nhan duoc ve don nay - luc
@@ -424,6 +514,81 @@ export const handleVnpayIpn = async (req, res) => {
   }
 };
 
+// Callback ZaloPay POST {data, mac}. QUAN TRONG: "data" la CHUOI JSON string
+// (chua parse) - mac phai duoc tinh tren CHINH chuoi nay (xem util/zalopay.js),
+// khong phai tren object da JSON.parse, vi JSON.stringify lai co the sinh ra
+// chuoi khac byte-for-byte (thu tu key, khoang trang) lam mac khong khop.
+//
+// return_code tra ve theo tai lieu ZaloPay: 1 = thanh cong (ZaloPay se KHONG
+// goi lai), khac 1 = loi/can goi lai. CHUA xac minh 100% cac ma loi chi tiet
+// khac 1 - se doi chieu lai khi co sandbox that.
+export const handleZalopayCallback = async (req, res) => {
+  try {
+    const { data, mac } = req.body || {};
+    if (typeof data !== "string" || !verifyZalopayMac(data, mac)) {
+      return res.json({ return_code: -1, return_message: "mac not match" });
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      return res.json({ return_code: -1, return_message: "invalid data" });
+    }
+    const appTransId = String(payload.app_trans_id || "");
+
+    await withTransaction(async (client) => {
+      const txn = await lockZalopayTransaction(client, appTransId);
+      // Khong ro giao dich nay - tra 1 de ZaloPay khong goi lai vo han cho
+      // mot app_trans_id server khong cap (khong phai loi can sua)
+      if (!txn) return;
+      // Idempotent: callback den nhieu lan (Server gui lai khi chua nhan
+      // duoc "return_code":1) chi xu ly MOT lan dau tien
+      if (txn.status !== "pending") return;
+
+      const order = await lockOrderById(client, txn.order_id);
+      if (!order) return;
+
+      const expectedAmount = Math.round(Number(order.amount));
+      const paidAmount = Number(payload.amount);
+      if (!Number.isFinite(paidAmount) || paidAmount !== expectedAmount) {
+        logger.error(`ZaloPay amount mismatch cho don ${order.id}: nhan ${payload.amount}, cho doi ${expectedAmount}`);
+        await markZalopayTransactionResult(client, appTransId, { status: "failed", raw: payload });
+        return;
+      }
+
+      await markZalopayTransactionResult(client, appTransId,
+        { status: "paid", zpTransId: payload.zp_trans_id, raw: payload });
+
+      // Tien DA ve nhung khong the ghi nhan cho don nay (da huy/da paid tu
+      // giao dich khac) - giu ban ghi, danh dau hoan tien (giong flagRefund VNPay)
+      if (order.status === "cancelled" || order.payment_status === "paid" || order.payment_status === "refunded") {
+        await flagRefund(client, order, payload.zp_trans_id);
+        return;
+      }
+
+      const statusAfterPayment = await markPaymentPaid(client, order.id);
+      if (statusAfterPayment === undefined) {
+        await flagRefund(client, order, payload.zp_trans_id);
+        return;
+      }
+      if (statusAfterPayment === "pending") {
+        await setOrderStatus(client, order.id, "confirmed");
+        await recordStatusChange(client, order.id, "pending", "confirmed", "system", null,
+          "Thanh toan ZaloPay thanh cong");
+        await recordEstimateActual(client, order.id, "confirmed");
+      }
+      await insertNotification(client, order.user_id, "Đặt hàng & thanh toán thành công",
+        `Đơn hàng #${shortCode(order.id)} đã được tạo, tổng tiền ${Number(order.amount).toLocaleString("vi-VN")}đ, đã thanh toán qua ZaloPay.`);
+    });
+
+    res.json({ return_code: 1, return_message: "success" });
+  } catch (error) {
+    logger.error("Handle ZaloPay callback error:", error);
+    res.json({ return_code: 0, return_message: "error" });
+  }
+};
+
 export const getMyOrders = async (req, res) => {
   try {
     const pagination = parseOrderPagination(req.query);
@@ -436,9 +601,11 @@ export const getMyOrders = async (req, res) => {
     }
 
     const { rows, total } = await listOrdersForUser({ userId: req.userId, status, limit, skip });
+    const orders = rows.map(toOrder);
+    await attachEtaWarnings(rows, orders);
     res.json({
       success: true,
-      orders: rows.map(toOrder),
+      orders,
       pagination: { currentPage: page, totalPages: Math.ceil(total / limit), totalOrders: total },
     });
   } catch (error) {
@@ -452,16 +619,18 @@ export const getOrderById = async (req, res) => {
     const problem = invalidOrderId(req.params.id);
     if (problem) return badRequest(res, problem);
 
-    const order = await findOrderById(req.params.id);
+    const row = await findOrderById(req.params.id);
 
-    if (!order) {
+    if (!row) {
       return res.status(404).json({ success: false, message: "Không tìm thấy đơn hàng" });
     }
-    if (order.user_id !== req.userId && !req.user.isAdmin) {
+    if (row.user_id !== req.userId && !req.user.isAdmin) {
       return res.status(403).json({ success: false, message: "Không có quyền xem đơn hàng này" });
     }
 
-    res.json({ success: true, order: toOrder(order) });
+    const order = toOrder(row);
+    await attachEtaWarnings([row], [order]);
+    res.json({ success: true, order });
   } catch (error) {
     logger.error("Get order by id error:", error);
     res.status(500).json({ success: false, message: "Lỗi khi lấy thông tin đơn hàng" });
@@ -485,12 +654,14 @@ export const getOrderByRequestId = async (req, res) => {
       return res.status(404).json({ success: false, message: "Chưa tìm thấy đơn hàng" });
     }
 
-    if (row.payment_method === "vnpay" && row.payment_status !== "paid") {
+    if (["vnpay", "zalopay"].includes(row.payment_method) && row.payment_status !== "paid") {
       if (row.status === "cancelled") {
         return res.status(410).json({ success: false, message: EXPIRED_MESSAGE });
       }
       // Van KHONG tra orderId/order: voi khach, don chi ton tai khi da tra tien
-      const activePayUrl = await findActivePayUrl(row.id);
+      const activePayUrl = row.payment_method === "vnpay"
+        ? await findActivePayUrl(row.id)
+        : await findActiveZalopayOrderUrl(row.id);
       const failed = row.payment_status === "failed";
       return res.json({
         success: true,
@@ -499,8 +670,8 @@ export const getOrderByRequestId = async (req, res) => {
         payUrl: !failed && activePayUrl ? activePayUrl : undefined,
         paymentExpiresAt: row.payment_expires_at,
         message: failed
-          ? "Thanh toán VNPay chưa thành công. Bạn có thể thanh toán lại hoặc hủy để chọn phương thức khác."
-          : "Chưa nhận được xác nhận thanh toán từ VNPay. Nếu bạn đã thanh toán, vui lòng đợi ít phút rồi kiểm tra lại.",
+          ? "Thanh toán chưa thành công. Bạn có thể thanh toán lại hoặc hủy để chọn phương thức khác."
+          : "Chưa nhận được xác nhận thanh toán. Nếu bạn đã thanh toán, vui lòng đợi ít phút rồi kiểm tra lại.",
       });
     }
 
@@ -524,15 +695,15 @@ export const abandonPendingPayment = async (req, res) => {
       const order = await lockOrderByRequestId(client, req.userId, req.params.clientRequestId);
       if (!order) throw new HttpError(404, "Không tìm thấy yêu cầu đặt hàng");
 
-      if (order.payment_method !== "vnpay" || order.payment_status === "paid") {
+      if (!["vnpay", "zalopay"].includes(order.payment_method) || order.payment_status === "paid") {
         return { exists: true, order: await findOrderById(order.id, client) };
       }
       if (order.status === "cancelled") return { cancelled: true };
 
-      await cancelOrderNow(client, order.id, "Khách hủy thanh toán VNPay");
+      await cancelOrderNow(client, order.id, "Khách hủy thanh toán");
       await restoreStock(client, order.id);
       await recordStatusChange(client, order.id, order.status, "cancelled", "customer",
-        req.userId, "Khach huy thanh toan VNPay");
+        req.userId, "Khach huy thanh toan");
       return { cancelled: true };
     });
 
@@ -549,19 +720,19 @@ export const abandonPendingPayment = async (req, res) => {
   }
 };
 
-// Huy cac don VNPay qua han thanh toan (+ thoi gian an han cho IPN den tre) va
-// hoan kho. Chay dinh ky tu server.js. FOR UPDATE SKIP LOCKED: nhieu instance
-// chay cung luc khong xu ly trung, va khong cho callback VNPay dang giu khoa.
-// Tien ve SAU khi don da bi huy o day se duoc processVnpayResult danh dau
-// refund_required, khong bao gio bi nuot.
+// Huy cac don VNPay/ZaloPay qua han thanh toan (+ thoi gian an han cho callback
+// den tre) va hoan kho. Chay dinh ky tu server.js. FOR UPDATE SKIP LOCKED:
+// nhieu instance chay cung luc khong xu ly trung, va khong cho callback dang
+// giu khoa. Tien ve SAU khi don da bi huy o day se duoc processVnpayResult/
+// processZalopayCallback danh dau refund_required, khong bao gio bi nuot.
 export const expireStaleVnpayOrders = async ({ graceMinutes = EXPIRY_GRACE_MINUTES, batchSize = 100 } = {}) =>
   withTransaction(async (client) => {
     const stale = await lockStaleVnpayOrders(client, graceMinutes, batchSize);
     for (const order of stale) {
-      await cancelOrderNow(client, order.id, "Hết hạn thanh toán VNPay");
+      await cancelOrderNow(client, order.id, "Hết hạn thanh toán");
       await restoreStock(client, order.id);
       await recordStatusChange(client, order.id, order.status, "cancelled", "system", null,
-        "Het han thanh toan VNPay");
+        "Het han thanh toan");
     }
     return stale.length;
   });
@@ -631,9 +802,11 @@ export const listAllOrders = async (req, res) => {
     }
 
     const { rows, total } = await listOrdersForAdmin({ status, limit, skip });
+    const orders = rows.map(toOrder);
+    await attachEtaWarnings(rows, orders);
     res.json({
       success: true,
-      orders: rows.map(toOrder),
+      orders,
       pagination: { currentPage: page, totalPages: Math.ceil(total / limit), totalOrders: total },
     });
   } catch (error) {
@@ -697,6 +870,7 @@ export const updateOrderStatus = async (req, res) => {
 
       if (status === "cancelled") await restoreStock(client, order.id);
       await recordStatusChange(client, order.id, order.status, status, "admin", req.userId);
+      await recordEstimateActual(client, order.id, status);
       await notifyOrderStatus(order.user_id, order.id, status, client);
 
       return { order: await findOrderById(order.id, client) };
@@ -711,5 +885,37 @@ export const updateOrderStatus = async (req, res) => {
   } catch (error) {
     sendHttpError(res, error, "Lỗi khi cập nhật trạng thái đơn hàng",
       (e) => logger.error("Update order status error:", e));
+  }
+};
+
+// Location Sharing (ban nhe): admin gan 1 tai xe cho 1 don - KHONG doi
+// actor_role/trang thai don (tai xe chi chia se vi tri, khong tu chuyen
+// trang thai trong ban nay). assignOrderDriver() tu kiem dieu kien (don
+// confirmed/shipped, dich la driver that) ngay trong SQL.
+export const assignDriver = async (req, res) => {
+  try {
+    const problem = invalidOrderId(req.params.id);
+    if (problem) return badRequest(res, problem);
+    const driverIdProblem = invalidUuid(req.body?.driverId, "Tài xế");
+    if (driverIdProblem) return badRequest(res, driverIdProblem);
+
+    const assigned = await withTransaction(async (client) => {
+      const order = await lockOrderById(client, req.params.id);
+      if (!order) throw new HttpError(404, "Không tìm thấy đơn hàng");
+      return assignOrderDriver(client, order.id, req.body.driverId);
+    });
+
+    if (!assigned) {
+      return res.status(400).json({
+        success: false,
+        message: "Không thể gán tài xế: đơn hàng không ở trạng thái phù hợp hoặc người dùng không phải tài xế",
+      });
+    }
+
+    const order = await findOrderById(req.params.id);
+    res.json({ success: true, message: "Đã gán tài xế", order: toOrder(order) });
+  } catch (error) {
+    sendHttpError(res, error, "Lỗi khi gán tài xế",
+      (e) => logger.error("Assign driver error:", e));
   }
 };

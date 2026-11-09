@@ -69,7 +69,8 @@ export const migrate = async () => {
 };
 
 const TABLES = [
-  "order_status_history", "payments", "payment_attempts", "order_items", "orders",
+  "order_status_history", "payments", "payment_attempts", "zalopay_transactions",
+  "delivery_estimates", "driver_locations", "order_items", "orders",
   "reviews", "notifications", "addresses", "foods", "categories", "users",
 ];
 
@@ -92,12 +93,14 @@ export const makeResponse = () => ({
   set() { return this; },
 });
 
-export const makeUser = async ({ email = "khach@test.local", isAdmin = false, isActive = true } = {}) => {
+export const makeUser = async ({
+  email = "khach@test.local", isAdmin = false, isActive = true, isDriver = false,
+} = {}) => {
   const { query } = await getDb();
   const { rows } = await query(
-    `INSERT INTO users (name, email, password, is_admin, is_active)
-     VALUES ($1, $2, 'hash-gia', $3, $4) RETURNING id`,
-    ["Khach Test", email, isAdmin, isActive]
+    `INSERT INTO users (name, email, password, is_admin, is_active, is_driver)
+     VALUES ($1, $2, 'hash-gia', $3, $4, $5) RETURNING id`,
+    ["Khach Test", email, isAdmin, isActive, isDriver]
   );
   return rows[0].id;
 };
@@ -111,12 +114,13 @@ export const makeCategory = async (name = "Mon nuoc") => {
 
 export const makeFood = async (categoryId, {
   name = "Phở bò", price = 65000, stock = 0, trackStock = false, isAvailable = true,
+  prepTimeMinutes = 15,
 } = {}) => {
   const { query } = await getDb();
   const { rows } = await query(
-    `INSERT INTO foods (name, price, image, category_id, stock, track_stock, is_available)
-     VALUES ($1, $2, 'anh.jpg', $3, $4, $5, $6) RETURNING id`,
-    [name, price, categoryId, stock, trackStock, isAvailable]
+    `INSERT INTO foods (name, price, image, category_id, stock, track_stock, is_available, prep_time_minutes)
+     VALUES ($1, $2, 'anh.jpg', $3, $4, $5, $6, $7) RETURNING id`,
+    [name, price, categoryId, stock, trackStock, isAvailable, prepTimeMinutes]
   );
   return rows[0].id;
 };

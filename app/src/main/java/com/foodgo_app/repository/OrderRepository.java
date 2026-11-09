@@ -8,6 +8,7 @@ import com.foodgo_app.api.ApiClient;
 import com.foodgo_app.api.ApiService;
 import com.foodgo_app.model.Address;
 import com.foodgo_app.model.OrderItem;
+import com.foodgo_app.model.response.AssignDriverRequest;
 import com.foodgo_app.model.response.CancelOrderRequest;
 import com.foodgo_app.model.response.OrderDetailResponse;
 import com.foodgo_app.model.response.OrderListResponse;
@@ -49,6 +50,10 @@ public class OrderRepository {
 
     public Call<OrderDetailResponse> cancelOrder(String id, String reason) {
         return apiService.cancelOrder(id, new CancelOrderRequest(reason));
+    }
+
+    public Call<OrderDetailResponse> assignDriver(String orderId, String driverId) {
+        return apiService.assignDriver(orderId, new AssignDriverRequest(driverId));
     }
 
     // ===== Danh cho admin =====

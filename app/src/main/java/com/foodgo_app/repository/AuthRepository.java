@@ -7,9 +7,13 @@ import com.foodgo_app.api.ApiService;
 import com.foodgo_app.model.response.AuthResponse;
 import com.foodgo_app.model.response.ChangePasswordRequest;
 import com.foodgo_app.model.response.DeleteAccountRequest;
+import com.foodgo_app.model.response.DriverListResponse;
+import com.foodgo_app.model.response.ForgotPasswordRequest;
 import com.foodgo_app.model.response.LoginRequest;
 import com.foodgo_app.model.response.ProfileResponse;
 import com.foodgo_app.model.response.RegisterRequest;
+import com.foodgo_app.model.response.ResetPasswordRequest;
+import com.foodgo_app.model.response.SetDriverFlagRequest;
 import com.foodgo_app.model.response.SimpleResponse;
 
 import okhttp3.MultipartBody;
@@ -45,7 +49,23 @@ public class AuthRepository {
         return apiService.changePassword(new ChangePasswordRequest(oldPassword, newPassword));
     }
 
+    public Call<SimpleResponse> forgotPassword(String email) {
+        return apiService.forgotPassword(new ForgotPasswordRequest(email));
+    }
+
+    public Call<SimpleResponse> resetPassword(String email, String code, String newPassword) {
+        return apiService.resetPassword(new ResetPasswordRequest(email, code, newPassword));
+    }
+
     public Call<SimpleResponse> deleteAccount(String password) {
         return apiService.deleteAccount(new DeleteAccountRequest(password));
+    }
+
+    public Call<DriverListResponse> getDrivers() {
+        return apiService.getDrivers();
+    }
+
+    public Call<SimpleResponse> setDriverFlag(String userId, boolean isDriver) {
+        return apiService.setDriverFlag(userId, new SetDriverFlagRequest(isDriver));
     }
 }

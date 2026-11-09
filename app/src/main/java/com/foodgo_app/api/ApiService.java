@@ -5,16 +5,26 @@ import androidx.annotation.Nullable;
 import com.foodgo_app.model.response.AddReviewRequest;
 import com.foodgo_app.model.response.AddressListResponse;
 import com.foodgo_app.model.response.AddressResponse;
+import com.foodgo_app.model.response.AiSearchRequest;
+import com.foodgo_app.model.response.AiSearchResponse;
+import com.foodgo_app.model.response.AssignDriverRequest;
 import com.foodgo_app.model.response.AuthResponse;
 import com.foodgo_app.model.response.CancelOrderRequest;
 import com.foodgo_app.model.response.CategoryDetailResponse;
 import com.foodgo_app.model.response.CategoryListResponse;
 import com.foodgo_app.model.response.ChangePasswordRequest;
+import com.foodgo_app.model.response.ChatHistoryResponse;
+import com.foodgo_app.model.response.ChatMessageRequest;
+import com.foodgo_app.model.response.ChatSendResponse;
 import com.foodgo_app.model.response.DeleteAccountRequest;
+import com.foodgo_app.model.response.DriverListResponse;
 import com.foodgo_app.model.response.EditReviewRequest;
 import com.foodgo_app.model.response.FoodDetailResponse;
 import com.foodgo_app.model.response.FoodListResponse;
+import com.foodgo_app.model.response.ForgotPasswordRequest;
+import com.foodgo_app.model.response.HomeRecommendationsResponse;
 import com.foodgo_app.model.response.LoginRequest;
+import com.foodgo_app.model.response.RestaurantLocationResponse;
 import com.foodgo_app.model.response.NotificationListResponse;
 import com.foodgo_app.model.response.OrderDetailResponse;
 import com.foodgo_app.model.response.OrderListResponse;
@@ -22,10 +32,13 @@ import com.foodgo_app.model.response.OrderStatsResponse;
 import com.foodgo_app.model.response.PlaceOrderRequest;
 import com.foodgo_app.model.response.ProfileResponse;
 import com.foodgo_app.model.response.RegisterRequest;
+import com.foodgo_app.model.response.ResetPasswordRequest;
 import com.foodgo_app.model.response.SaveAddressRequest;
 import com.foodgo_app.model.response.ReviewListResponse;
 import com.foodgo_app.model.response.ReviewResponse;
+import com.foodgo_app.model.response.SetDriverFlagRequest;
 import com.foodgo_app.model.response.SimpleResponse;
+import com.foodgo_app.model.response.UpdateDriverLocationRequest;
 import com.foodgo_app.model.response.UpdateStatusRequest;
 
 import okhttp3.MultipartBody;
@@ -66,6 +79,12 @@ public interface ApiService {
     @PUT("api/auth/change-password")
     Call<SimpleResponse> changePassword(@Body ChangePasswordRequest body);
 
+    @POST("api/auth/forgot-password")
+    Call<SimpleResponse> forgotPassword(@Body ForgotPasswordRequest body);
+
+    @POST("api/auth/reset-password")
+    Call<SimpleResponse> resetPassword(@Body ResetPasswordRequest body);
+
     // DELETE co body (mat khau xac nhan) - @DELETE cua Retrofit khong cho gui body
     @HTTP(method = "DELETE", path = "api/auth/account", hasBody = true)
     Call<SimpleResponse> deleteAccount(@Body DeleteAccountRequest body);
@@ -79,6 +98,10 @@ public interface ApiService {
 
     @GET("api/food/category/{category}")
     Call<FoodListResponse> getFoodByCategory(@Path("category") String category);
+
+    // AI Search - rule-based truoc, Gemini la fallback phia server
+    @POST("api/food/ai-search")
+    Call<AiSearchResponse> aiSearchFood(@Body AiSearchRequest body);
 
     // ===== Food (admin) =====
     @Multipart
@@ -154,6 +177,9 @@ public interface ApiService {
     @PUT("api/order/{id}/cancel")
     Call<OrderDetailResponse> cancelOrder(@Path("id") String id, @Body CancelOrderRequest body);
 
+    @PUT("api/order/{id}/assign-driver")
+    Call<OrderDetailResponse> assignDriver(@Path("id") String id, @Body AssignDriverRequest body);
+
     // ===== Order (admin) =====
     @GET("api/order/list")
     Call<OrderListResponse> getAllOrders(
@@ -206,4 +232,33 @@ public interface ApiService {
 
     @PUT("api/notification/read-all")
     Call<SimpleResponse> markAllNotificationsRead();
+
+    // ===== AI Chatbot =====
+    @POST("api/chat/message")
+    Call<ChatSendResponse> sendChatMessage(@Body ChatMessageRequest body);
+
+    @GET("api/chat/history")
+    Call<ChatHistoryResponse> getChatHistory();
+
+    // ===== AI Recommendation =====
+    @GET("api/recommendations/home")
+    Call<HomeRecommendationsResponse> getHomeRecommendations();
+
+    // ===== Maps =====
+    @GET("api/restaurant/location")
+    Call<RestaurantLocationResponse> getRestaurantLocation();
+
+    // ===== Driver (self) =====
+    @GET("api/driver/orders")
+    Call<OrderListResponse> getMyDeliveries();
+
+    @PUT("api/driver/location")
+    Call<SimpleResponse> updateMyDriverLocation(@Body UpdateDriverLocationRequest body);
+
+    // ===== Driver (admin) =====
+    @GET("api/auth/drivers")
+    Call<DriverListResponse> getDrivers();
+
+    @PUT("api/auth/users/{id}/driver")
+    Call<SimpleResponse> setDriverFlag(@Path("id") String id, @Body SetDriverFlagRequest body);
 }

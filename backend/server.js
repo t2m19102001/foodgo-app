@@ -15,7 +15,12 @@ import orderRouter from "./routers/orderRouter.js";
 import reviewRouter from "./routers/reviewRouter.js";
 import notificationRouter from "./routers/notificationRouter.js";
 import addressRouter from "./routers/addressRouter.js";
+import chatRouter from "./routers/chatRouter.js";
+import recommendationRouter from "./routers/recommendationRouter.js";
+import restaurantRouter from "./routers/restaurantRouter.js";
+import driverRouter from "./routers/driverRouter.js";
 import { expireStaleVnpayOrders } from "./controllers/orderController.js";
+import { findPaymentDiscrepancies } from "./util/reconciliation.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,6 +89,10 @@ app.use("/api/order", orderRouter);
 app.use("/api/review", reviewRouter);
 app.use("/api/notification", notificationRouter);
 app.use("/api/address", addressRouter);
+app.use("/api/chat", chatRouter);
+app.use("/api/recommendations", recommendationRouter);
+app.use("/api/restaurant", restaurantRouter);
+app.use("/api/driver", driverRouter);
 
 app.get("/", (req, res) => {
   res.send("Delivery App API Working");
@@ -125,3 +134,25 @@ const expiryTimer = setInterval(async () => {
   }
 }, EXPIRY_INTERVAL_MS);
 expiryTimer.unref();
+
+// Doi soat thanh toan dinh ky - thay cho viec phai nho chay "npm run
+// reconcile" bang tay (scripts/reconcile-payments.mjs). Chi CANH BAO qua log,
+// khong tu sua: moi truong hop (hoan tien, tra hai lan...) can nguoi kiem tra
+// tay truoc khi dong tien.
+const RECONCILE_INTERVAL_MS = 60 * 60 * 1000; // 1 gio
+const reconcileTimer = setInterval(async () => {
+  try {
+    const { paidButNotRecorded, refundPending, paidTwice } = await findPaymentDiscrepancies();
+    const total = paidButNotRecorded.length + refundPending.length + paidTwice.length;
+    if (total > 0) {
+      logger.warn(
+        `Doi soat thanh toan: ${total} muc can kiem tra (chua ghi paid: `
+        + `${paidButNotRecorded.length}, cho hoan tien: ${refundPending.length}, `
+        + `tra hai lan: ${paidTwice.length}) - chay "npm run reconcile" de xem chi tiet`
+      );
+    }
+  } catch (error) {
+    logger.error("Reconcile payments error:", error.message);
+  }
+}, RECONCILE_INTERVAL_MS);
+reconcileTimer.unref();

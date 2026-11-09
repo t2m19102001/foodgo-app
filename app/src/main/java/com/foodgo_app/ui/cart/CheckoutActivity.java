@@ -40,8 +40,10 @@ public class CheckoutActivity extends AppCompatActivity {
     private android.widget.ProgressBar progressBar;
     private View cardPaymentCod;
     private View cardPaymentVnpay;
+    private View cardPaymentZalopay;
     private RadioButton radioPaymentCod;
     private RadioButton radioPaymentVnpay;
+    private RadioButton radioPaymentZalopay;
 
     private MaterialButton btnChangeAddress;
     private MaterialButton btnAddAddress;
@@ -89,10 +91,13 @@ public class CheckoutActivity extends AppCompatActivity {
 
         cardPaymentCod = findViewById(R.id.card_payment_cod);
         cardPaymentVnpay = findViewById(R.id.card_payment_vnpay);
+        cardPaymentZalopay = findViewById(R.id.card_payment_zalopay);
         radioPaymentCod = findViewById(R.id.radio_payment_cod);
         radioPaymentVnpay = findViewById(R.id.radio_payment_vnpay);
-        cardPaymentCod.setOnClickListener(v -> selectPaymentMethod(true));
-        cardPaymentVnpay.setOnClickListener(v -> selectPaymentMethod(false));
+        radioPaymentZalopay = findViewById(R.id.radio_payment_zalopay);
+        cardPaymentCod.setOnClickListener(v -> selectPaymentMethod("cod"));
+        cardPaymentVnpay.setOnClickListener(v -> selectPaymentMethod("vnpay"));
+        cardPaymentZalopay.setOnClickListener(v -> selectPaymentMethod("zalopay"));
 
         summaryAdapter = new CartSummaryAdapter();
         recyclerSummary.setLayoutManager(new LinearLayoutManager(this));
@@ -100,9 +105,7 @@ public class CheckoutActivity extends AppCompatActivity {
 
         viewModel = new ViewModelProvider(this).get(CheckoutViewModel.class);
 
-        btnPlaceOrder.setOnClickListener(v -> viewModel.placeOrder(
-                radioPaymentVnpay.isChecked() ? "vnpay" : "cod"
-        ));
+        btnPlaceOrder.setOnClickListener(v -> viewModel.placeOrder(selectedPaymentMethod()));
 
         textPendingStatus = findViewById(R.id.text_pending_status);
         layoutPendingActions = findViewById(R.id.layout_pending_actions);
@@ -113,7 +116,7 @@ public class CheckoutActivity extends AppCompatActivity {
         });
         findViewById(R.id.btn_cancel_pending).setOnClickListener(v ->
                 new MaterialAlertDialogBuilder(this)
-                        .setTitle("Hủy thanh toán VNPay?")
+                        .setTitle("Hủy thanh toán?")
                         .setMessage("Đơn đang chờ thanh toán sẽ bị hủy, giỏ hàng vẫn được giữ nguyên để bạn chọn phương thức khác. "
                                 + "Nếu bạn đã thanh toán, hãy bấm \"Kiểm tra / thanh toán lại\" trước.")
                         .setNegativeButton("Không", null)
@@ -147,10 +150,17 @@ public class CheckoutActivity extends AppCompatActivity {
         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(payUrl)));
     }
 
-    private void selectPaymentMethod(boolean isCod) {
+    private void selectPaymentMethod(String method) {
         if (hasPending) return;
-        radioPaymentCod.setChecked(isCod);
-        radioPaymentVnpay.setChecked(!isCod);
+        radioPaymentCod.setChecked("cod".equals(method));
+        radioPaymentVnpay.setChecked("vnpay".equals(method));
+        radioPaymentZalopay.setChecked("zalopay".equals(method));
+    }
+
+    private String selectedPaymentMethod() {
+        if (radioPaymentVnpay.isChecked()) return "vnpay";
+        if (radioPaymentZalopay.isChecked()) return "zalopay";
+        return "cod";
     }
 
     private void observeViewModel() {
@@ -173,6 +183,7 @@ public class CheckoutActivity extends AppCompatActivity {
             float alpha = hasPending ? 0.5f : 1f;
             cardPaymentCod.setAlpha(alpha);
             cardPaymentVnpay.setAlpha(alpha);
+            cardPaymentZalopay.setAlpha(alpha);
             updatePlaceOrderButtonState();
         });
 
@@ -204,14 +215,14 @@ public class CheckoutActivity extends AppCompatActivity {
             }
         });
 
-        // VNPay: don chua "ton tai" voi khach cho den khi thanh toan xong, nen o
-        // day KHONG dieu huong, KHONG bao thanh cong - chi mo trinh duyet. Khi khach
-        // quay lai, onResume tu kiem tra trang thai (xem refreshPendingStatus).
-        viewModel.getVnpayPayUrl().observe(this, payUrl -> {
+        // VNPay/ZaloPay: don chua "ton tai" voi khach cho den khi thanh toan xong,
+        // nen o day KHONG dieu huong, KHONG bao thanh cong - chi mo trinh duyet.
+        // Khi khach quay lai, onResume tu kiem tra trang thai (refreshPendingStatus).
+        viewModel.getPendingPayUrl().observe(this, payUrl -> {
             if (payUrl != null && !payUrl.isEmpty()) {
-                Toast.makeText(this, "Đang chuyển đến VNPay để thanh toán…", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Đang chuyển đến trang thanh toán…", Toast.LENGTH_SHORT).show();
                 openPayment(payUrl);
-                viewModel.clearVnpayPayUrl();
+                viewModel.clearPendingPayUrl();
             }
         });
 

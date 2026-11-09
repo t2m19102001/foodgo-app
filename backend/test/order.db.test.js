@@ -324,3 +324,32 @@ test("don tra ve dung hinh JSON ma app Android cho doi", { skip }, async () => {
   assert.equal(created.isCancellable, true);
   assert.ok(created.date, "app doc Order.date");
 });
+
+test("placeOrder snapshot dung lat/lng khi dia chi co toa do, null khi khong co", { skip }, async () => {
+  const userId = await makeUser();
+  const foodId = await makeFood(await makeCategory());
+
+  const withCoords = makeResponse();
+  await order.placeOrder(
+    placeReq(userId, foodId, { address: { ...address, lat: 10.7769, lng: 106.7009 } }),
+    withCoords);
+  assert.equal(withCoords.statusCode, 201);
+  assert.equal(withCoords.body.order.shipLat, 10.7769);
+  assert.equal(withCoords.body.order.shipLng, 106.7009);
+
+  const withoutCoords = makeResponse();
+  await order.placeOrder(placeReq(userId, foodId), withoutCoords);
+  assert.equal(withoutCoords.body.order.shipLat, null);
+  assert.equal(withoutCoords.body.order.shipLng, null);
+});
+
+test("placeOrder tu choi lat/lng ngoai pham vi toa do thuc", { skip }, async () => {
+  const userId = await makeUser();
+  const foodId = await makeFood(await makeCategory());
+
+  const response = makeResponse();
+  await order.placeOrder(
+    placeReq(userId, foodId, { address: { ...address, lat: 999, lng: 106.7 } }),
+    response);
+  assert.equal(response.statusCode, 400);
+});

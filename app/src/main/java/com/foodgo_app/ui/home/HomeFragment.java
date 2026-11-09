@@ -7,6 +7,7 @@ import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -24,6 +25,7 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.foodgo_app.R;
 import com.foodgo_app.adapter.CategoryAdapter;
 import com.foodgo_app.adapter.FoodAdapter;
+import com.foodgo_app.adapter.RecommendationAdapter;
 import com.foodgo_app.model.Category;
 import com.foodgo_app.repository.CartRepository;
 import com.foodgo_app.ui.home.FoodDetailActivity;
@@ -38,11 +40,17 @@ public class HomeFragment extends Fragment {
     private CartRepository cartRepository;
     private FoodAdapter foodAdapter;
     private CategoryAdapter categoryAdapter;
+    private RecommendationAdapter forYouAdapter;
+    private RecommendationAdapter topRatedAdapter;
     private String selectedCategory = null;
 
     private SwipeRefreshLayout swipeRefresh;
     private ProgressBar progressBar;
     private TextView textEmpty;
+    private View layoutForYou;
+    private View layoutTopRated;
+    private View layoutAiSearchBanner;
+    private TextInputEditText editSearch;
 
     @Nullable
     @Override
@@ -60,9 +68,16 @@ public class HomeFragment extends Fragment {
 
         RecyclerView recyclerFood = view.findViewById(R.id.recycler_food);
         RecyclerView recyclerCategory = view.findViewById(R.id.recycler_category);
-        TextInputEditText editSearch = view.findViewById(R.id.edit_search);
+        RecyclerView recyclerForYou = view.findViewById(R.id.recycler_for_you);
+        RecyclerView recyclerTopRated = view.findViewById(R.id.recycler_top_rated);
+        editSearch = view.findViewById(R.id.edit_search);
         swipeRefresh = view.findViewById(R.id.swipe_refresh);
         swipeRefresh.setColorSchemeResources(R.color.colorPrimary);
+
+        layoutForYou = view.findViewById(R.id.layout_for_you);
+        layoutTopRated = view.findViewById(R.id.layout_top_rated);
+        layoutAiSearchBanner = view.findViewById(R.id.layout_ai_search_banner);
+        view.findViewById(R.id.btn_clear_ai_search).setOnClickListener(v -> editSearch.setText(""));
 
         String userName = new SessionManager(requireContext()).getUserName();
         TextView textGreeting = view.findViewById(R.id.text_greeting);
@@ -102,6 +117,18 @@ public class HomeFragment extends Fragment {
         recyclerCategory.setLayoutManager(new LinearLayoutManager(getContext(), LinearLayoutManager.HORIZONTAL, false));
         recyclerCategory.setAdapter(categoryAdapter);
 
+        RecommendationAdapter.OnItemClickListener openFoodDetail = item -> {
+            Intent intent = new Intent(getActivity(), FoodDetailActivity.class);
+            intent.putExtra("foodId", item.getFood().getId());
+            startActivity(intent);
+        };
+        forYouAdapter = new RecommendationAdapter(openFoodDetail);
+        recyclerForYou.setLayoutManager(new LinearLayoutManager(getContext(), LinearLayoutManager.HORIZONTAL, false));
+        recyclerForYou.setAdapter(forYouAdapter);
+        topRatedAdapter = new RecommendationAdapter(openFoodDetail);
+        recyclerTopRated.setLayoutManager(new LinearLayoutManager(getContext(), LinearLayoutManager.HORIZONTAL, false));
+        recyclerTopRated.setAdapter(topRatedAdapter);
+
         editSearch.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -113,6 +140,15 @@ public class HomeFragment extends Fragment {
 
             @Override
             public void afterTextChanged(Editable s) {}
+        });
+        // Bam nut tim kiem (IME action) tren ban phim = goi AI Search; go binh
+        // thuong van loc client-side tuc thi nhu truoc (TextWatcher o tren)
+        editSearch.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                viewModel.aiSearch(editSearch.getText() != null ? editSearch.getText().toString() : "");
+                return true;
+            }
+            return false;
         });
 
         swipeRefresh.setOnRefreshListener(() -> {
@@ -150,5 +186,16 @@ public class HomeFragment extends Fragment {
                 viewModel.clearError();
             }
         });
+
+        viewModel.getForYou().observe(getViewLifecycleOwner(), items -> {
+            forYouAdapter.setItems(items);
+            layoutForYou.setVisibility(forYouAdapter.isEmpty() ? View.GONE : View.VISIBLE);
+        });
+        viewModel.getTopRated().observe(getViewLifecycleOwner(), items -> {
+            topRatedAdapter.setItems(items);
+            layoutTopRated.setVisibility(topRatedAdapter.isEmpty() ? View.GONE : View.VISIBLE);
+        });
+        viewModel.getAiSearchActive().observe(getViewLifecycleOwner(), active ->
+                layoutAiSearchBanner.setVisibility(Boolean.TRUE.equals(active) ? View.VISIBLE : View.GONE));
     }
 }

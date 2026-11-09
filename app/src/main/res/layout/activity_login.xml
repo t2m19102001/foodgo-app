@@ -100,6 +100,16 @@
             </com.google.android.material.textfield.TextInputLayout>
 
             <TextView
+                android:id="@+id/text_go_forgot_password"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end"
+                android:layout_marginTop="10dp"
+                android:background="?attr/selectableItemBackground"
+                android:text="Quên mật khẩu?"
+                android:textColor="@color/colorPrimary" />
+
+            <TextView
                 android:id="@+id/text_error"
                 style="@style/Text.App.Error"
                 android:layout_width="match_parent"

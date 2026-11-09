@@ -53,10 +53,11 @@ public class AddressViewModel extends AndroidViewModel {
         return true;
     }
 
-    public void addAddress(String fullName, String phone, String addressText, String note, boolean isDefault) {
+    public void addAddress(String fullName, String phone, String addressText, String note, boolean isDefault,
+                            Double lat, Double lng) {
         if (!validateFields(fullName, phone, addressText)) return;
         loading.setValue(true);
-        addressRepository.addAddress(fullName.trim(), phone.trim(), addressText.trim(), note, isDefault)
+        addressRepository.addAddress(fullName.trim(), phone.trim(), addressText.trim(), note, isDefault, lat, lng)
                 .enqueue(new Callback<AddressResponse>() {
                     @Override
                     public void onResponse(@NonNull Call<AddressResponse> call, @NonNull Response<AddressResponse> response) {
@@ -77,10 +78,11 @@ public class AddressViewModel extends AndroidViewModel {
                 });
     }
 
-    public void updateAddress(String id, String fullName, String phone, String addressText, String note) {
+    public void updateAddress(String id, String fullName, String phone, String addressText, String note,
+                               Double lat, Double lng) {
         if (!validateFields(fullName, phone, addressText)) return;
         loading.setValue(true);
-        addressRepository.updateAddress(id, fullName.trim(), phone.trim(), addressText.trim(), note)
+        addressRepository.updateAddress(id, fullName.trim(), phone.trim(), addressText.trim(), note, lat, lng)
                 .enqueue(new Callback<AddressResponse>() {
                     @Override
                     public void onResponse(@NonNull Call<AddressResponse> call, @NonNull Response<AddressResponse> response) {

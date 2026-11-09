@@ -37,7 +37,7 @@ public class CartRepositoryTest {
     }
 
     private void signIn(String userId) {
-        new SessionManager(context).saveSession("token-" + userId, userId, "Nguoi dung", false);
+        new SessionManager(context).saveSession("token-" + userId, userId, "Nguoi dung", false, false);
     }
 
     @Before

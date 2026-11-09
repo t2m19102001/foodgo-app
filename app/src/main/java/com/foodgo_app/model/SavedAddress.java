@@ -10,6 +10,9 @@ public class SavedAddress {
     private String address;
     private String note;
     private boolean isDefault;
+    // null = chua chon tren ban do (van hop le, nhap text thuong)
+    private Double lat;
+    private Double lng;
 
     public String getId() { return id; }
     public String getFullName() { return fullName; }
@@ -17,4 +20,7 @@ public class SavedAddress {
     public String getAddress() { return address; }
     public String getNote() { return note; }
     public boolean isDefault() { return isDefault; }
+    public Double getLat() { return lat; }
+    public Double getLng() { return lng; }
+    public boolean hasCoordinates() { return lat != null && lng != null; }
 }

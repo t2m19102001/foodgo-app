@@ -12,6 +12,8 @@ import {
   updateOrderStatus,
   handleVnpayReturn,
   handleVnpayIpn,
+  handleZalopayCallback,
+  assignDriver,
 } from "../controllers/orderController.js";
 import { authMiddleware, adminMiddleware } from "../middleware/auth.js";
 
@@ -36,7 +38,9 @@ orderRouter.get("/request/:clientRequestId", authMiddleware, getOrderByRequestId
 orderRouter.post("/request/:clientRequestId/abandon", authMiddleware, abandonPendingPayment);
 orderRouter.get("/vnpay/return", handleVnpayReturn);
 orderRouter.get("/vnpay/ipn", handleVnpayIpn);
+orderRouter.post("/zalopay/callback", handleZalopayCallback);
 orderRouter.put("/:id/status", adminMiddleware, updateOrderStatus);
+orderRouter.put("/:id/assign-driver", adminMiddleware, assignDriver);
 orderRouter.put("/:id/cancel", authMiddleware, cancelOrder);
 orderRouter.get("/:id", authMiddleware, getOrderById);
 

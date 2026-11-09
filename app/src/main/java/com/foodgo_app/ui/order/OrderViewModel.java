@@ -41,8 +41,15 @@ public class OrderViewModel extends AndroidViewModel {
     private String statusFilter = null;
 
     public OrderViewModel(@NonNull Application application) {
+        this(application, new OrderRepository(application));
+    }
+
+    // Package-private: dung de inject repository gia trong unit test (xem
+    // app/src/test/java/com/foodgo_app/ui/order/OrderViewModelTest.java),
+    // khong dung o production - ViewModelProvider chi goi constructor 1 tham so.
+    OrderViewModel(@NonNull Application application, OrderRepository orderRepository) {
         super(application);
-        orderRepository = new OrderRepository(application);
+        this.orderRepository = orderRepository;
     }
 
     public LiveData<List<Order>> getOrders() { return orders; }
@@ -132,6 +139,28 @@ public class OrderViewModel extends AndroidViewModel {
 
             @Override
             public void onFailure(@NonNull Call<OrderDetailResponse> call, @NonNull Throwable t) {
+                error.setValue("Không thể kết nối tới server: " + t.getMessage());
+            }
+        });
+    }
+
+    public void assignDriver(String orderId, String driverId) {
+        loading.setValue(true);
+        orderRepository.assignDriver(orderId, driverId).enqueue(new Callback<OrderDetailResponse>() {
+            @Override
+            public void onResponse(@NonNull Call<OrderDetailResponse> call, @NonNull Response<OrderDetailResponse> response) {
+                loading.setValue(false);
+                OrderDetailResponse body = response.body();
+                if (response.isSuccessful() && body != null && body.isSuccess()) {
+                    orderDetail.setValue(body.getOrder());
+                } else {
+                    error.setValue(body != null ? body.getMessage() : ApiErrorUtils.getMessage(response, "Không thể gán tài xế"));
+                }
+            }
+
+            @Override
+            public void onFailure(@NonNull Call<OrderDetailResponse> call, @NonNull Throwable t) {
+                loading.setValue(false);
                 error.setValue("Không thể kết nối tới server: " + t.getMessage());
             }
         });

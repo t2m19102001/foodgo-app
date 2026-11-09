@@ -8,6 +8,7 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
@@ -20,15 +21,27 @@ import com.foodgo_app.R;
 import com.foodgo_app.util.DateUtils;
 import com.foodgo_app.adapter.OrderItemAdapter;
 import com.foodgo_app.model.Order;
+import com.foodgo_app.model.response.DriverListResponse;
+import com.foodgo_app.model.response.DriverSummary;
+import com.foodgo_app.repository.AuthRepository;
 import com.foodgo_app.ui.review.AddEditReviewActivity;
+import com.foodgo_app.util.ApiErrorUtils;
 import com.foodgo_app.util.CurrencyUtils;
 import com.foodgo_app.util.OrderStatusHelper;
 import com.foodgo_app.util.PaymentStatusHelper;
 import com.foodgo_app.util.SessionManager;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+
 public class OrderDetailActivity extends AppCompatActivity {
 
     private OrderViewModel viewModel;
+    private AuthRepository authRepository;
     private OrderItemAdapter itemAdapter;
     private String orderId;
 
@@ -44,6 +57,7 @@ public class OrderDetailActivity extends AppCompatActivity {
     private TextView textCancelReason;
     private MaterialButton btnCancelOrder;
     private MaterialButton btnTrackOrder;
+    private MaterialButton btnAssignDriver;
     private android.widget.ProgressBar progressBar;
 
     @Override
@@ -73,8 +87,10 @@ public class OrderDetailActivity extends AppCompatActivity {
         textCancelReason = findViewById(R.id.text_cancel_reason);
         btnCancelOrder = findViewById(R.id.btn_cancel_order);
         btnTrackOrder = findViewById(R.id.btn_track_order);
+        btnAssignDriver = findViewById(R.id.btn_assign_driver);
         progressBar = findViewById(R.id.progress_bar);
         RecyclerView recyclerItems = findViewById(R.id.recycler_items);
+        authRepository = new AuthRepository(getApplication());
 
         // Mon trong don da giao co them nut danh gia
         itemAdapter = new OrderItemAdapter(item -> {
@@ -94,6 +110,7 @@ public class OrderDetailActivity extends AppCompatActivity {
             intent.putExtra("orderId", orderId);
             startActivity(intent);
         });
+        btnAssignDriver.setOnClickListener(v -> showAssignDriverDialog());
 
         observeViewModel();
         viewModel.loadOrderDetail(orderId);
@@ -126,6 +143,41 @@ public class OrderDetailActivity extends AppCompatActivity {
                 })
                 .setNegativeButton("Đóng", null)
                 .show();
+    }
+
+    // Danh sach tai xe chi dung tam thoi cho dialog nay, khong can luu o ViewModel
+    private void showAssignDriverDialog() {
+        authRepository.getDrivers().enqueue(new Callback<DriverListResponse>() {
+            @Override
+            public void onResponse(@NonNull Call<DriverListResponse> call, @NonNull Response<DriverListResponse> response) {
+                DriverListResponse body = response.body();
+                if (!response.isSuccessful() || body == null || !body.isSuccess()) {
+                    Toast.makeText(OrderDetailActivity.this,
+                            ApiErrorUtils.getMessage(response, "Không thể tải danh sách tài xế"), Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                List<DriverSummary> drivers = body.getDrivers() != null ? body.getDrivers() : new ArrayList<>();
+                if (drivers.isEmpty()) {
+                    Toast.makeText(OrderDetailActivity.this,
+                            "Chưa có tài xế nào, hãy cấp quyền tài xế cho một tài khoản trước", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                CharSequence[] names = new CharSequence[drivers.size()];
+                for (int i = 0; i < drivers.size(); i++) {
+                    names[i] = drivers.get(i).getName() + " (" + drivers.get(i).getEmail() + ")";
+                }
+                new AlertDialog.Builder(OrderDetailActivity.this)
+                        .setTitle("Chọn tài xế")
+                        .setItems(names, (dialog, which) -> viewModel.assignDriver(orderId, drivers.get(which).getId()))
+                        .setNegativeButton("Đóng", null)
+                        .show();
+            }
+
+            @Override
+            public void onFailure(@NonNull Call<DriverListResponse> call, @NonNull Throwable t) {
+                Toast.makeText(OrderDetailActivity.this, "Không thể kết nối tới server: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void observeViewModel() {
@@ -188,5 +240,10 @@ public class OrderDetailActivity extends AppCompatActivity {
         boolean isOwner = currentUserId != null && currentUserId.equals(order.getUserId());
         btnCancelOrder.setVisibility(order.isCancellable() && isOwner ? View.VISIBLE : View.GONE);
         btnTrackOrder.setVisibility("cancelled".equals(order.getStatus()) ? View.GONE : View.VISIBLE);
+
+        boolean isAdmin = new SessionManager(this).isAdmin();
+        boolean assignableStatus = OrderStatusHelper.CONFIRMED.equals(order.getStatus())
+                || OrderStatusHelper.SHIPPED.equals(order.getStatus());
+        btnAssignDriver.setVisibility(isAdmin && assignableStatus ? View.VISIBLE : View.GONE);
     }
 }

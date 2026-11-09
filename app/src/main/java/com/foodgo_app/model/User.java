@@ -11,6 +11,7 @@ public class User {
     private String address;
     private String image;
     private boolean isAdmin;
+    private boolean isDriver;
     private boolean isActive;
 
     public String getId() { return id; }
@@ -20,5 +21,6 @@ public class User {
     public String getAddress() { return address; }
     public String getImage() { return image; }
     public boolean isAdmin() { return isAdmin; }
+    public boolean isDriver() { return isDriver; }
     public boolean isActive() { return isActive; }
 }

@@ -5,7 +5,7 @@ import { HttpError, sendHttpError } from "../util/httpError.js";
 import logger from "../util/logger.js";
 
 const ADDRESS_SELECT = `
-  SELECT id, full_name, phone, address, note, is_default, created_at, updated_at
+  SELECT id, full_name, phone, address, note, is_default, lat, lng, created_at, updated_at
   FROM addresses`;
 
 const validateFields = ({ fullName, phone, address }) => {
@@ -17,6 +17,14 @@ const validateFields = ({ fullName, phone, address }) => {
   }
   return null;
 };
+
+// lat/lng la optional (chon tren ban do) - khong bat buoc, nhung neu co thi
+// phai la so hop le trong pham vi toa do thuc
+const validLat = (value) => value === undefined || value === null
+  || (Number.isFinite(Number(value)) && Number(value) >= -90 && Number(value) <= 90);
+const validLng = (value) => value === undefined || value === null
+  || (Number.isFinite(Number(value)) && Number(value) >= -180 && Number(value) <= 180);
+const toCoord = (value) => (value === undefined || value === null ? null : Number(value));
 
 export const getMyAddresses = async (req, res) => {
   try {
@@ -34,13 +42,16 @@ export const getMyAddresses = async (req, res) => {
 
 export const addAddress = async (req, res) => {
   try {
-    const { fullName, phone, address, note } = req.body || {};
+    const { fullName, phone, address, note, lat, lng } = req.body || {};
     const validationError = validateFields({ fullName, phone, address });
     if (validationError) {
       return res.status(400).json({ success: false, message: validationError });
     }
     if ((note || "").length > 500) {
       return res.status(400).json({ success: false, message: "Ghi chú quá dài" });
+    }
+    if (!validLat(lat) || !validLng(lng)) {
+      return res.status(400).json({ success: false, message: "Toạ độ không hợp lệ" });
     }
 
     const created = await withTransaction(async (client) => {
@@ -66,10 +77,11 @@ export const addAddress = async (req, res) => {
       }
 
       const { rows } = await client.query(
-        `INSERT INTO addresses (user_id, full_name, phone, address, note, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, full_name, phone, address, note, is_default, created_at, updated_at`,
-        [req.userId, fullName.trim(), phone.trim(), address.trim(), note || "", wantDefault]
+        `INSERT INTO addresses (user_id, full_name, phone, address, note, is_default, lat, lng)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, full_name, phone, address, note, is_default, lat, lng, created_at, updated_at`,
+        [req.userId, fullName.trim(), phone.trim(), address.trim(), note || "", wantDefault,
+          toCoord(lat), toCoord(lng)]
       );
       return rows[0];
     });
@@ -91,7 +103,7 @@ export const updateAddress = async (req, res) => {
       return res.status(400).json({ success: false, message: "Mã địa chỉ không hợp lệ" });
     }
 
-    const { fullName, phone, address: addressText, note } = req.body || {};
+    const { fullName, phone, address: addressText, note, lat, lng } = req.body || {};
 
     const owner = await query("SELECT user_id FROM addresses WHERE id = $1", [req.params.id]);
     if (owner.rowCount === 0) {
@@ -108,12 +120,16 @@ export const updateAddress = async (req, res) => {
     if ((note || "").length > 500) {
       return res.status(400).json({ success: false, message: "Ghi chú quá dài" });
     }
+    if (!validLat(lat) || !validLng(lng)) {
+      return res.status(400).json({ success: false, message: "Toạ độ không hợp lệ" });
+    }
 
     const { rows } = await query(
-      `UPDATE addresses SET full_name = $2, phone = $3, address = $4, note = $5
+      `UPDATE addresses SET full_name = $2, phone = $3, address = $4, note = $5, lat = $6, lng = $7
        WHERE id = $1
-       RETURNING id, full_name, phone, address, note, is_default, created_at, updated_at`,
-      [req.params.id, fullName.trim(), phone.trim(), addressText.trim(), note || ""]
+       RETURNING id, full_name, phone, address, note, is_default, lat, lng, created_at, updated_at`,
+      [req.params.id, fullName.trim(), phone.trim(), addressText.trim(), note || "",
+        toCoord(lat), toCoord(lng)]
     );
 
     res.json({
@@ -152,7 +168,7 @@ export const setDefaultAddress = async (req, res) => {
       );
       const { rows } = await client.query(
         `UPDATE addresses SET is_default = true WHERE id = $1
-         RETURNING id, full_name, phone, address, note, is_default, created_at, updated_at`,
+         RETURNING id, full_name, phone, address, note, is_default, lat, lng, created_at, updated_at`,
         [req.params.id]
       );
       return { address: rows[0] };

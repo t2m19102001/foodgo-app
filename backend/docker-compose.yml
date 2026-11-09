@@ -1,0 +1,18 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      # Khong mount thi anh mon/avatar upload luc chay (multer) nam trong
+      # filesystem cua container, mat het moi lan build lai image khi deploy.
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -25,34 +25,70 @@ import logger from "../util/logger.js";
 //
 // Ngoai le: don co refund_required (tien VNPay ve sau khi don da het han/huy)
 // PHAI hien - admin can thay de hoan tien, khach can thay don cho hoan.
+// Moi payment_method can "giu cho" truoc khi thanh toan xong (vnpay, zalopay)
+// phai liet ke o day - KHONG dung "<> 'vnpay'" (truoc day chi loai vnpay nen
+// zalopay vo tinh roi vao nhanh "luon hien", lo don chua tra tien - da bat
+// qua test zalopay.db.test.js, khong phai suy doan).
 export const VISIBLE_ORDER_FILTER =
-  "(payment_method <> 'vnpay' OR payment_status = 'paid' OR refund_required)";
+  "(payment_method NOT IN ('vnpay', 'zalopay') OR payment_status = 'paid' OR refund_required)";
 
 // client la pg client trong transaction, hoac undefined de dung pool
 export const run = (client, text, params) => (client ? client.query(text, params) : query(text, params));
+
+// Cot cua delivery_estimates (xem migration 006), alias thanh "eta_*" vi
+// "o.*" da chiem het ten cot cua orders va delivery_estimates cung co
+// created_at/updated_at - khong alias se de ghi de nham cot.
+const ETA_SELECT = `
+         de.prep_base_minutes        AS eta_prep_base_minutes,
+         de.confirm_minutes          AS eta_confirm_minutes,
+         de.prep_minutes             AS eta_prep_minutes,
+         de.delivery_minutes         AS eta_delivery_minutes,
+         de.total_minutes            AS eta_total_minutes,
+         de.estimated_ready_at       AS eta_estimated_ready_at,
+         de.estimated_delivered_at   AS eta_estimated_delivered_at,
+         de.actual_confirmed_at      AS eta_actual_confirmed_at,
+         de.actual_shipped_at        AS eta_actual_shipped_at,
+         de.actual_delivered_at      AS eta_actual_delivered_at`;
+
+// Vi tri tai xe (migration 011) - chi co nghia khi don dang 'shipped', nhung
+// join vo dieu kien cho moi trang thai: mapOrder() (xem db/mappers.js) la
+// noi quyet dinh an/hien theo status, khong loc o day de giu SQL don gian.
+const DRIVER_LOCATION_SELECT = `
+         dl.lat                      AS driver_lat,
+         dl.lng                      AS driver_lng,
+         dl.updated_at               AS driver_location_updated_at`;
 
 // items lay bang json_agg trong cung mot query - khong bao gio lap vong goi
 // query cho tung don (N+1)
 export const ORDER_SELECT = `
   SELECT o.*,
+${ETA_SELECT},
+${DRIVER_LOCATION_SELECT},
          COALESCE((
            SELECT json_agg(json_build_object(
                     'food_id', i.food_id, 'name', i.name, 'price', i.price,
                     'quantity', i.quantity, 'image', i.image) ORDER BY i.id)
            FROM order_items i WHERE i.order_id = o.id
          ), '[]'::json) AS items
-  FROM orders o`;
+  FROM orders o
+  LEFT JOIN delivery_estimates de ON de.order_id = o.id
+  LEFT JOIN driver_locations dl ON dl.driver_id = o.driver_id`;
 
 // Thong tin khach nam o field "customer": app Android doc "userId" la chuoi.
 const ADMIN_ORDER_SELECT = `
   SELECT o.*, u.name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
+${ETA_SELECT},
+${DRIVER_LOCATION_SELECT},
          COALESCE((
            SELECT json_agg(json_build_object(
                     'food_id', i.food_id, 'name', i.name, 'price', i.price,
                     'quantity', i.quantity, 'image', i.image) ORDER BY i.id)
            FROM order_items i WHERE i.order_id = o.id
          ), '[]'::json) AS items
-  FROM orders o JOIN users u ON u.id = o.user_id`;
+  FROM orders o
+  JOIN users u ON u.id = o.user_id
+  LEFT JOIN delivery_estimates de ON de.order_id = o.id
+  LEFT JOIN driver_locations dl ON dl.driver_id = o.driver_id`;
 
 // Row thuan cua Postgres -> JSON dung hinh ma app Android cho doi. Cac ham doc
 // ben duoi tra ve ROW THO chu khong goi san ham nay, vi nhieu cho con can
@@ -164,7 +200,7 @@ export const REVENUE_LAST_7_DAYS_SQL =
             count(*)::int AS count
      FROM orders o
      WHERE o.status = 'delivered'
-       AND (o.payment_method <> 'vnpay' OR o.payment_status = 'paid')
+       AND (o.payment_method NOT IN ('vnpay', 'zalopay') OR o.payment_status = 'paid')
        AND o.created_at >= ${LAST_7_DAYS_START}
        AND o.created_at <  ${LAST_7_DAYS_END}
      GROUP BY 1
@@ -233,20 +269,35 @@ export const lockOrderByRequestId = async (client, userId, clientRequestId) => {
 // Khoa cac mon theo thu tu id de hai don dat cung luc khong deadlock
 export const lockFoodsForOrder = async (client, foodIds) => {
   const { rows } = await client.query(
-    `SELECT id, name, price, image, is_available, stock, track_stock
+    `SELECT id, name, price, image, is_available, stock, track_stock, prep_time_minutes
      FROM foods WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
     [foodIds]
   );
   return rows;
 };
 
-// Don VNPay qua han thanh toan (+ an han cho IPN den tre). SKIP LOCKED: nhieu
-// instance chay cung luc khong xu ly trung, va khong cho callback VNPay dang
-// giu khoa.
+// So don dang "tai" he thong (pending/confirmed) dung lam he so tre cho Smart
+// ETA - dung VISIBLE_ORDER_FILTER de don VNPay chua tra tien (nha hang chua
+// biet don do ton tai) khong tinh vao tai. excludeOrderId de khong tu tinh
+// chinh don vua tao vao tai cua no khi doc lai sau nay.
+export const countActiveOrders = async (client, excludeOrderId) => {
+  const params = excludeOrderId ? [excludeOrderId] : [];
+  const excludeClause = excludeOrderId ? "AND o.id <> $1" : "";
+  const { rows } = await run(client,
+    `SELECT count(*)::int AS n FROM orders o
+     WHERE o.status IN ('pending', 'confirmed') AND ${VISIBLE_ORDER_FILTER} ${excludeClause}`,
+    params);
+  return rows[0].n;
+};
+
+// Don VNPay/ZaloPay qua han thanh toan (+ an han cho callback den tre). SKIP
+// LOCKED: nhieu instance chay cung luc khong xu ly trung, va khong cho
+// callback dang giu khoa. Ten ham giu "Vnpay" vi ly do lich su nhung xu ly
+// ca ZaloPay - ca hai deu dat payment_expires_at khi dat hang (xem insertOrder).
 export const lockStaleVnpayOrders = async (client, graceMinutes, batchSize) => {
   const { rows } = await client.query(
     `SELECT id, status FROM orders
-     WHERE payment_method = 'vnpay' AND status = 'pending'
+     WHERE payment_method IN ('vnpay', 'zalopay') AND status = 'pending'
        AND payment_status IN ('unpaid', 'failed')
        AND payment_expires_at < now() - make_interval(mins => $1::int)
      ORDER BY payment_expires_at
@@ -272,9 +323,10 @@ export const insertOrder = async (client, {
   const { rows } = await client.query(
     `INSERT INTO orders (user_id, client_request_id, request_fingerprint, amount,
                          ship_full_name, ship_phone, ship_address, ship_note,
-                         payment_method, status, payment_expires_at)
+                         payment_method, status, payment_expires_at, ship_lat, ship_lng)
      VALUES ($1, $2, $3, 0, $4, $5, $6, $7, $8, 'pending',
-             CASE WHEN $8 = 'vnpay' THEN now() + make_interval(mins => $9::int) END)
+             CASE WHEN $8 IN ('vnpay', 'zalopay') THEN now() + make_interval(mins => $9::int) END,
+             $10, $11)
      ON CONFLICT (user_id, client_request_id) WHERE client_request_id IS NOT NULL
      DO NOTHING
      RETURNING id`,
@@ -282,6 +334,8 @@ export const insertOrder = async (client, {
       userId, clientRequestId, requestFingerprint,
       address.fullName.trim(), address.phone.trim(), address.address.trim(),
       (address.note || "").trim(), paymentMethod, paymentTtlMinutes,
+      address.lat != null ? Number(address.lat) : null,
+      address.lng != null ? Number(address.lng) : null,
     ]
   );
   return rows[0]?.id;
@@ -358,6 +412,35 @@ export const recordStatusChange = (client, orderId, fromStatus, toStatus, actorR
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [orderId, fromStatus, toStatus, actorRole, changedBy, note]);
 
+// ============================================================= ghi: Smart ETA
+
+// Baseline Smart ETA, luu dung mot lan luc dat hang (xem placeOrder). eta la
+// ket qua cua calcEta() (util/eta.js) cong hai moc gio da tinh san.
+export const insertDeliveryEstimate = (client, orderId, eta) => client.query(
+  `INSERT INTO delivery_estimates (
+     order_id, distinct_items_count, active_orders_at_creation, prep_base_minutes, load_factor,
+     confirm_minutes, prep_minutes, delivery_minutes, total_minutes,
+     estimated_ready_at, estimated_delivered_at)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+  [orderId, eta.distinctItemsCount, eta.activeOrdersCount, eta.prepBaseMinutes, eta.loadFactor,
+   eta.confirmMinutes, eta.prepMinutes, eta.deliveryMinutes, eta.totalMinutes,
+   eta.estimatedReadyAt, eta.estimatedDeliveredAt]
+);
+
+// Whitelist noi bo status -> cot actual_*_at, KHONG nhan ten cot tu input
+// nguoi dung. status da duoc VALID_STATUSES kiem truoc o controller, ham nay
+// tu gioi han lai; status khong khop (vd 'cancelled') thi bo qua, khong loi.
+const ETA_ACTUAL_COLUMN = {
+  confirmed: "actual_confirmed_at",
+  shipped: "actual_shipped_at",
+  delivered: "actual_delivered_at",
+};
+export const recordEstimateActual = (client, orderId, status) => {
+  const column = ETA_ACTUAL_COLUMN[status];
+  if (!column) return Promise.resolve();
+  return run(client, `UPDATE delivery_estimates SET ${column} = now() WHERE order_id = $1`, [orderId]);
+};
+
 // ============================================================ ghi: thanh toan
 
 // Chi cap lan thanh toan moi cho don con dang cho: job het han hoac khach huy
@@ -391,6 +474,61 @@ export const findPaymentAttempt = async (client, txnRef, orderId) => {
   );
   return rows[0];
 };
+
+// ============================================================ ghi: ZaloPay
+//
+// Bang rieng zalopay_transactions (xem migration 008) - khong dung chung
+// payment_attempts/payments vi hai bang do gan chat ten cot VNPay.
+
+// order_url con han (>2 phut) va chua tung that bai -> tai su dung, giong
+// tinh than findReusablePayUrl cua VNPay (tranh cap qua nhieu app_trans_id
+// cho cung 1 don khi khach bam lai nhieu lan).
+export const findReusableZalopayOrderUrl = async (orderId) => {
+  const { rows } = await query(
+    `SELECT order_url FROM zalopay_transactions
+     WHERE order_id = $1 AND status = 'pending' AND expires_at > now() + interval '2 minutes'
+     ORDER BY created_at DESC LIMIT 1`,
+    [orderId]
+  );
+  return rows[0]?.order_url;
+};
+
+// Khong co bien 2 phut (khac findReusableZalopayOrderUrl o tren): day chi la
+// thong tin "dang cho thanh toan" bao cho app, khong phai URL vua cap moi -
+// cung tinh than findActivePayUrl cua VNPay.
+export const findActiveZalopayOrderUrl = async (orderId) => {
+  const { rows } = await query(
+    `SELECT order_url FROM zalopay_transactions
+     WHERE order_id = $1 AND status = 'pending' AND expires_at > now()
+     ORDER BY created_at DESC LIMIT 1`,
+    [orderId]
+  );
+  return rows[0]?.order_url;
+};
+
+export const insertZalopayTransaction = (client, { orderId, appTransId, orderUrl, expiresAt }) =>
+  client.query(
+    `INSERT INTO zalopay_transactions (order_id, app_trans_id, order_url, expires_at)
+     VALUES ($1, $2, $3, $4)`,
+    [orderId, appTransId, orderUrl, expiresAt]
+  );
+
+// FOR UPDATE: callback co the den nhieu lan/song song cho cung app_trans_id,
+// khoa dong ghi de serialize - giong tinh than lockOrderById cho VNPay.
+export const lockZalopayTransaction = async (client, appTransId) => {
+  const { rows } = await client.query(
+    "SELECT * FROM zalopay_transactions WHERE app_trans_id = $1 FOR UPDATE",
+    [appTransId]
+  );
+  return rows[0];
+};
+
+export const markZalopayTransactionResult = (client, appTransId, { status, zpTransId, raw }) =>
+  client.query(
+    `UPDATE zalopay_transactions SET status = $2, zp_trans_id = $3, raw_callback = $4::jsonb
+     WHERE app_trans_id = $1`,
+    [appTransId, status, zpTransId || null, JSON.stringify(raw)]
+  );
 
 // Ledger append-only. UNIQUE (vnp_transaction_no) lam idempotency nam o tang DB:
 // Return URL va IPN cung bao ve mot giao dich thi chi mot ban ghi duoc tao, va
@@ -450,6 +588,41 @@ export const markPaymentPaid = async (client, orderId) => {
 export const markRefundRequired = (client, orderId) => client.query(
   "UPDATE orders SET refund_required = true WHERE id = $1",
   [orderId]
+);
+
+// ===================================================== Location Sharing (nhe)
+//
+// Khong co dieu phoi tu dong, khong luu lich su vi tri - xem migration 011.
+
+// Don dang giao duoc gan cho CHINH tai xe dang goi (driverMiddleware dam bao
+// req.userId la mot driver) - driver khong the tu xem don cua driver khac.
+export const listOrdersForDriver = (driverId) => run(undefined,
+  `${ORDER_SELECT} WHERE o.driver_id = $1 AND o.status = 'shipped' ORDER BY o.created_at DESC`,
+  [driverId]
+);
+
+// Validate target la driver va don dang o trang thai hop le NGAY TRONG CAU
+// SQL (dieu kien trong WHERE) - tranh race giua kiem tra va ghi.
+export const assignOrderDriver = async (client, orderId, driverId) => {
+  const { rowCount } = await client.query(
+    `UPDATE orders SET driver_id = $2
+     WHERE id = $1 AND status IN ('confirmed', 'shipped')
+       AND EXISTS (SELECT 1 FROM users WHERE id = $2 AND is_driver = true)`,
+    [orderId, driverId]
+  );
+  return rowCount > 0;
+};
+
+// UPSERT: chi luu vi tri MOI NHAT (PRIMARY KEY = driver_id), khong phai lich su
+export const upsertDriverLocation = (driverId, lat, lng) => query(
+  `INSERT INTO driver_locations (driver_id, lat, lng, updated_at)
+   VALUES ($1, $2, $3, now())
+   ON CONFLICT (driver_id) DO UPDATE SET lat = $2, lng = $3, updated_at = now()`,
+  [driverId, lat, lng]
+);
+
+export const listDriverUsers = () => query(
+  "SELECT id, name, email FROM users WHERE is_driver = true AND is_active ORDER BY name"
 );
 
 // ============================================================= ghi: thong bao

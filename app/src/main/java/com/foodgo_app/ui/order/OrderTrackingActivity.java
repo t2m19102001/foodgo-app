@@ -14,8 +14,10 @@ import androidx.core.content.ContextCompat;
 import androidx.lifecycle.ViewModelProvider;
 
 import com.foodgo_app.R;
+import com.foodgo_app.model.EtaInfo;
 import com.foodgo_app.model.Order;
 import com.foodgo_app.ui.main.MainActivity;
+import com.foodgo_app.ui.map.DeliveryMapActivity;
 import com.foodgo_app.util.OrderStatusHelper;
 import com.foodgo_app.util.PaymentStatusHelper;
 
@@ -36,6 +38,13 @@ public class OrderTrackingActivity extends AppCompatActivity {
     private TextView stepConfirmed;
     private TextView stepShipped;
     private TextView stepDelivered;
+    private View cardEta;
+    private TextView textEtaTotal;
+    private TextView textEtaConfirm;
+    private TextView textEtaPrep;
+    private TextView textEtaDelivery;
+    private TextView textEtaWarning;
+    private View btnViewMap;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,6 +69,18 @@ public class OrderTrackingActivity extends AppCompatActivity {
         stepConfirmed = findViewById(R.id.step_confirmed);
         stepShipped = findViewById(R.id.step_shipped);
         stepDelivered = findViewById(R.id.step_delivered);
+        cardEta = findViewById(R.id.card_eta);
+        textEtaTotal = findViewById(R.id.text_eta_total);
+        textEtaConfirm = findViewById(R.id.text_eta_confirm);
+        textEtaPrep = findViewById(R.id.text_eta_prep);
+        textEtaDelivery = findViewById(R.id.text_eta_delivery);
+        textEtaWarning = findViewById(R.id.text_eta_warning);
+        btnViewMap = findViewById(R.id.btn_view_map);
+        btnViewMap.setOnClickListener(v -> {
+            Intent intent = new Intent(this, DeliveryMapActivity.class);
+            intent.putExtra("orderId", orderId);
+            startActivity(intent);
+        });
 
         String shortId = orderId.length() > 8 ? orderId.substring(orderId.length() - 8) : orderId;
         textOrderCode.setText("Đơn hàng #" + shortId);
@@ -120,6 +141,8 @@ public class OrderTrackingActivity extends AppCompatActivity {
             stepConfirmed.setVisibility(View.GONE);
             stepShipped.setVisibility(View.GONE);
             stepDelivered.setVisibility(View.GONE);
+            cardEta.setVisibility(View.GONE);
+            btnViewMap.setVisibility(View.GONE);
             handler.removeCallbacksAndMessages(null);
             return;
         }
@@ -129,6 +152,8 @@ public class OrderTrackingActivity extends AppCompatActivity {
         stepConfirmed.setVisibility(View.VISIBLE);
         stepShipped.setVisibility(View.VISIBLE);
         stepDelivered.setVisibility(View.VISIBLE);
+        btnViewMap.setVisibility(order.hasShipCoordinates() ? View.VISIBLE : View.GONE);
+        bindEta(order.getEta());
 
         int activeStep = stepIndex(status);
         highlightStep(stepPending, 0, activeStep);
@@ -138,6 +163,26 @@ public class OrderTrackingActivity extends AppCompatActivity {
 
         if ("delivered".equals(status)) {
             handler.removeCallbacksAndMessages(null);
+        }
+    }
+
+    // eta la null voi don dat truoc khi co Smart ETA (xem model/EtaInfo.java)
+    private void bindEta(EtaInfo eta) {
+        if (eta == null) {
+            cardEta.setVisibility(View.GONE);
+            return;
+        }
+        cardEta.setVisibility(View.VISIBLE);
+        textEtaTotal.setText("Dự kiến giao trong khoảng " + eta.getTotalMinutes() + " phút");
+        textEtaConfirm.setText("Xác nhận đơn: ~" + eta.getConfirmMinutes() + " phút");
+        textEtaPrep.setText("Chuẩn bị món: ~" + eta.getPrepMinutes() + " phút");
+        textEtaDelivery.setText("Giao hàng: ~" + eta.getDeliveryMinutes() + " phút");
+        if (eta.isDelayed()) {
+            textEtaWarning.setVisibility(View.VISIBLE);
+            textEtaWarning.setText("Quán đang đông đơn, có thể trễ thêm khoảng "
+                    + eta.getDelayMinutes() + " phút so với dự kiến ban đầu");
+        } else {
+            textEtaWarning.setVisibility(View.GONE);
         }
     }
 

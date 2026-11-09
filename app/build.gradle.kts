@@ -42,6 +42,15 @@ android {
         targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersionName
+        // Maps API key la CLIENT key gioi han theo package name + SHA1 o Google
+        // Cloud Console (khong giu kin tuyet doi nhu JWT/VNPay secret), nhung
+        // van doc tu property/env thay vi hardcode de moi nguoi dung key rieng.
+        // De trong thi Maps SDK hien ban do trong rong, KHONG crash app.
+        manifestPlaceholders["MAPS_API_KEY"] =
+            providers.gradleProperty("FOODGO_MAPS_API_KEY")
+                .orElse(providers.environmentVariable("FOODGO_MAPS_API_KEY"))
+                .orElse("")
+                .get()
     }
 
     signingConfigs {
@@ -61,6 +70,10 @@ android {
 
     buildTypes {
         debug {
+            // TAM DOI sang backend local qua dia chi dac biet cua Android
+            // Emulator (10.0.2.2 = localhost cua may host) vi server production
+            // (3.25.35.122) dang tat. Doi lai "http://3.25.35.122:5000/" khi
+            // server online tro lai.
             buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:5000/\"")
         }
         release {
@@ -128,8 +141,12 @@ dependencies {
     implementation(libs.lifecycle.livedata)
     implementation(libs.recyclerview)
     implementation(libs.swiperefreshlayout)
+    implementation(libs.play.services.maps)
+    implementation(libs.play.services.location)
+    implementation(libs.security.crypto)
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.crashlytics)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    testImplementation(libs.core.testing)
 }

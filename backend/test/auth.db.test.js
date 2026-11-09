@@ -205,6 +205,88 @@ test("xoa tai khoan: sai mat khau -> 400, khong doi gi", { skip }, async () => {
   assert.equal(user.email, "xoa@test.local");
 });
 
+// ---------------------------------------------------------------------------
+// Quen mat khau
+
+test("forgot-password: email khong ton tai van tra 200 voi thong bao giong email co ton tai", { skip }, async () => {
+  const hash = await bcrypt.hash("matkhaucu", 10);
+  await db.query("INSERT INTO users (name, email, password) VALUES ('A', 'conmail@test.local', $1)", [hash]);
+
+  const exists = makeResponse();
+  await auth.requestPasswordReset({ body: { email: "conmail@test.local" } }, exists);
+
+  const notExists = makeResponse();
+  await auth.requestPasswordReset({ body: { email: "khong-ton-tai@test.local" } }, notExists);
+
+  assert.equal(exists.statusCode, 200);
+  assert.equal(notExists.statusCode, 200);
+  assert.equal(exists.body.message, notExists.body.message, "khong duoc tiet lo email nao ton tai");
+
+  // Chi tai khoan ton tai moi co ma duoc tao
+  assert.equal(
+    (await db.query("SELECT count(*)::int AS n FROM password_reset_codes")).rows[0].n, 1);
+});
+
+test("reset-password: dat lai thanh cong voi ma dung, token cu het hieu luc", { skip }, async () => {
+  const hash = await bcrypt.hash("matkhaucu", 10);
+  const { rows } = await db.query(
+    `INSERT INTO users (name, email, password, token_version)
+     VALUES ('A', 'quenmk@test.local', $1, 2) RETURNING id`, [hash]);
+  const userId = rows[0].id;
+
+  const request = makeResponse();
+  await auth.requestPasswordReset({ body: { email: "quenmk@test.local" } }, request);
+  assert.equal(request.statusCode, 200);
+
+  // SMTP chua cau hinh trong test nen ma thuc gui chi duoc log, khong doc duoc
+  // tu day - tu chen mot ma biet truoc (cung cach hash voi controller) de test
+  // duong dan resetPassword, thay vi doan lai ma that da gui o tren.
+  const crypto = await import("node:crypto");
+  const code = "123456";
+  const codeHash = crypto.createHash("sha256").update(code).digest("hex");
+  await db.query(
+    `INSERT INTO password_reset_codes (user_id, code_hash, expires_at)
+     VALUES ($1, $2, now() + interval '15 minutes')`, [userId, codeHash]);
+
+  const response = makeResponse();
+  await auth.resetPassword(
+    { body: { email: "quenmk@test.local", code, newPassword: "matkhaumoi" } }, response);
+  assert.equal(response.statusCode, 200, JSON.stringify(response.body));
+
+  const after = await db.query("SELECT password, token_version FROM users WHERE id = $1", [userId]);
+  assert.ok(await bcrypt.compare("matkhaumoi", after.rows[0].password));
+  assert.equal(after.rows[0].token_version, 3, "token cu phai het hieu luc");
+
+  // Dung lai ma cu lan nua phai bi tu choi (used_at da duoc danh dau)
+  const reuse = makeResponse();
+  await auth.resetPassword(
+    { body: { email: "quenmk@test.local", code, newPassword: "khac-nua" } }, reuse);
+  assert.equal(reuse.statusCode, 400);
+});
+
+test("reset-password: ma sai hoac het han bi tu choi, khong doi mat khau", { skip }, async () => {
+  const hash = await bcrypt.hash("matkhaucu", 10);
+  const { rows } = await db.query(
+    `INSERT INTO users (name, email, password, token_version)
+     VALUES ('A', 'masai@test.local', $1, 0) RETURNING id`, [hash]);
+  const userId = rows[0].id;
+
+  const crypto = await import("node:crypto");
+  const codeHash = crypto.createHash("sha256").update("111111").digest("hex");
+  await db.query(
+    `INSERT INTO password_reset_codes (user_id, code_hash, expires_at)
+     VALUES ($1, $2, now() - interval '1 minute')`, [userId, codeHash]); // da het han
+
+  const response = makeResponse();
+  await auth.resetPassword(
+    { body: { email: "masai@test.local", code: "111111", newPassword: "matkhaumoi" } }, response);
+  assert.equal(response.statusCode, 400);
+
+  const after = await db.query("SELECT password, token_version FROM users WHERE id = $1", [userId]);
+  assert.equal(after.rows[0].password, hash, "mat khau khong duoc doi khi ma het han");
+  assert.equal(after.rows[0].token_version, 0);
+});
+
 test("xoa tai khoan: con don dang giao -> 409; don VNPay chua tra tien thi duoc huy", { skip }, async () => {
   const blocked = await makeAccount("dangiao@test.local");
   await makeOrderFor(blocked, { status: "shipped" });

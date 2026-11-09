@@ -51,8 +51,10 @@ public class CheckoutViewModel extends AndroidViewModel {
     // orderId/order nen khong co gi de dieu huong toi ca - chi mo payUrl.
     private final MutableLiveData<String> placedOrderId = new MutableLiveData<>();
     private final MutableLiveData<Boolean> hasPendingOrder = new MutableLiveData<>(false);
-    private final MutableLiveData<String> vnpayPayUrl = new MutableLiveData<>();
-    // Trang thai thanh toan VNPay dang cho, hien duoi tong tien (null = an)
+    // Dung chung cho VNPay va ZaloPay - ca hai deu tra ve cung field "payUrl"
+    // trong response (xem OrderDetailResponse), Android khong can biet khac biet.
+    private final MutableLiveData<String> pendingPayUrl = new MutableLiveData<>();
+    // Trang thai thanh toan dang cho, hien duoi tong tien (null = an)
     private final MutableLiveData<String> pendingStatus = new MutableLiveData<>();
     // payUrl con han de mo lai trang thanh toan (null = an nut)
     private final MutableLiveData<String> resumePayUrl = new MutableLiveData<>();
@@ -62,10 +64,19 @@ public class CheckoutViewModel extends AndroidViewModel {
     private final MutableLiveData<SavedAddress> selectedAddress = new MutableLiveData<>();
 
     public CheckoutViewModel(@NonNull Application application) {
+        this(application, new CartRepository(application), new OrderRepository(application),
+                new AddressRepository(application));
+    }
+
+    // Package-private: dung de inject repository gia trong unit test (xem
+    // app/src/test/java/com/foodgo_app/ui/cart/CheckoutViewModelTest.java),
+    // khong dung o production - ViewModelProvider chi goi constructor 1 tham so.
+    CheckoutViewModel(@NonNull Application application, CartRepository cartRepository,
+                       OrderRepository orderRepository, AddressRepository addressRepository) {
         super(application);
-        cartRepository = new CartRepository(application);
-        orderRepository = new OrderRepository(application);
-        addressRepository = new AddressRepository(application);
+        this.cartRepository = cartRepository;
+        this.orderRepository = orderRepository;
+        this.addressRepository = addressRepository;
         pendingPrefs = application.getSharedPreferences("delivery_app_checkout", Context.MODE_PRIVATE);
         pendingKey = pendingKeyFor(application);
         hasPendingOrder.setValue(pendingPrefs.contains(pendingKey));
@@ -95,8 +106,8 @@ public class CheckoutViewModel extends AndroidViewModel {
     public void clearError() { error.setValue(null); }
     public LiveData<String> getPlacedOrderId() { return placedOrderId; }
     public LiveData<Boolean> getHasPendingOrder() { return hasPendingOrder; }
-    public LiveData<String> getVnpayPayUrl() { return vnpayPayUrl; }
-    public void clearVnpayPayUrl() { vnpayPayUrl.setValue(null); }
+    public LiveData<String> getPendingPayUrl() { return pendingPayUrl; }
+    public void clearPendingPayUrl() { pendingPayUrl.setValue(null); }
     public LiveData<String> getPendingStatus() { return pendingStatus; }
     public LiveData<String> getResumePayUrl() { return resumePayUrl; }
     public LiveData<String> getInfo() { return info; }
@@ -179,7 +190,7 @@ public class CheckoutViewModel extends AndroidViewModel {
             ));
         }
         Address address = new Address(savedAddress.getFullName(), savedAddress.getPhone(),
-                savedAddress.getAddress(), savedAddress.getNote());
+                savedAddress.getAddress(), savedAddress.getNote(), savedAddress.getLat(), savedAddress.getLng());
         double amount = cartRepository.getTotalAmount();
         PlaceOrderRequest request = new PlaceOrderRequest(orderItems, amount, address,
                 UUID.randomUUID().toString(), paymentMethod);
@@ -288,9 +299,9 @@ public class CheckoutViewModel extends AndroidViewModel {
         }
         loading.setValue(false);
         pendingStatus.setValue(body.getMessage());
-        // Khong tu mo lai VNPay: khach co the vua tra tien xong va IPN chua ve.
-        // Chi hien nut "Mo lai trang thanh toan" voi payUrl cu (cung txnRef nen
-        // VNPay khong cho tra hai lan).
+        // Khong tu mo lai trang thanh toan: khach co the vua tra tien xong va
+        // callback chua ve. Chi hien nut "Mo lai trang thanh toan" voi payUrl cu
+        // (cung txnRef/app_trans_id nen cong thanh toan khong cho tra hai lan).
         resumePayUrl.setValue(failed ? null : body.getPayUrl());
     }
 
@@ -303,12 +314,12 @@ public class CheckoutViewModel extends AndroidViewModel {
                 OrderDetailResponse body = response.body();
                 if (response.isSuccessful() && body != null && body.isSuccess()) {
                     if (body.getPayUrl() != null && !body.getPayUrl().isEmpty()) {
-                        // VNPay CHUA thanh toan: server khong tra orderId. Giu nguyen
-                        // gio hang (chi xoa khi da thanh toan xong, xem completeOrder)
-                        // de khach huy/doi phuong thuc thi khong mat gio.
-                        pendingStatus.setValue("Đang chờ thanh toán qua VNPay. Sau khi thanh toán xong, quay lại đây và bấm \"Kiểm tra / thanh toán lại\".");
+                        // Don VNPay/ZaloPay CHUA thanh toan: server khong tra orderId.
+                        // Giu nguyen gio hang (chi xoa khi da thanh toan xong, xem
+                        // completeOrder) de khach huy/doi phuong thuc thi khong mat gio.
+                        pendingStatus.setValue("Đang chờ thanh toán. Sau khi thanh toán xong, quay lại đây và bấm \"Kiểm tra / thanh toán lại\".");
                         resumePayUrl.setValue(body.getPayUrl());
-                        vnpayPayUrl.setValue(body.getPayUrl());
+                        pendingPayUrl.setValue(body.getPayUrl());
                     } else {
                         completeOrder(body, request);
                     }

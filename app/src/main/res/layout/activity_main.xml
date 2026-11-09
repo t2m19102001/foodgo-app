@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- FrameLayout ngoai de FAB chat noi DE LEN TREN bottom nav - LinearLayout
+     ben trong giu nguyen cau truc cu (toolbar/fragment/bottom nav). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+<LinearLayout
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/surface"
@@ -77,3 +83,17 @@
         app:menu="@menu/bottom_nav_menu" />
 
 </LinearLayout>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_chat"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="20dp"
+        android:layout_marginBottom="76dp"
+        android:contentDescription="Trợ lý AI FoodGo"
+        android:src="@drawable/ic_chat"
+        app:backgroundTint="@color/colorPrimary"
+        app:tint="@color/white" />
+
+</FrameLayout>
