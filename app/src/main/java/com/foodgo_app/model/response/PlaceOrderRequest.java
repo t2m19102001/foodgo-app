@@ -11,17 +11,21 @@ public class PlaceOrderRequest {
     private final Address address;
     private final String clientRequestId;
     private final String paymentMethod;
+    // null/rong = khong dung ma giam gia
+    private final String voucherCode;
 
     public PlaceOrderRequest(List<OrderItem> items, double amount, Address address, String clientRequestId,
-                              String paymentMethod) {
+                              String paymentMethod, String voucherCode) {
         this.items = items;
         this.amount = amount;
         this.address = address;
         this.clientRequestId = clientRequestId;
         this.paymentMethod = paymentMethod;
+        this.voucherCode = voucherCode;
     }
 
     public String getClientRequestId() { return clientRequestId; }
     public List<OrderItem> getItems() { return items; }
     public String getPaymentMethod() { return paymentMethod; }
+    public String getVoucherCode() { return voucherCode; }
 }

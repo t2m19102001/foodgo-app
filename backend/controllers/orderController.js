@@ -6,7 +6,7 @@ import {
   listOrdersForUser, listOrdersForAdmin, readOrderStats,
   findReusablePayUrl, findActivePayUrl,
   lockOrderById, lockOrderByRequestId, lockFoodsForOrder, lockStaleVnpayOrders,
-  insertOrder, takeStock, insertOrderItem, setOrderAmount, restoreStock,
+  insertOrder, takeStock, insertOrderItem, restoreStock,
   changeOrderStatus, cancelOrderIfStatus, cancelOrderNow, setOrderStatus, recordStatusChange,
   claimPaymentAttempt, insertPaymentAttempt, findPaymentAttempt, insertPaymentLedger,
   markPaymentFailed, markPaymentPaid, markRefundRequired,
@@ -16,9 +16,14 @@ import {
   lockZalopayTransaction, markZalopayTransactionResult,
   assignOrderDriver,
 } from "../db/orders.js";
+import {
+  lockVoucherByCode, countVoucherRedemptions, countVoucherRedemptionsByUser,
+  insertVoucherRedemption, applyOrderVoucher,
+} from "../db/vouchers.js";
 import { buildPaymentUrl, verifySignature } from "../util/vnpay.js";
 import { createOrder as createZalopayOrder, verifyCallbackMac as verifyZalopayMac, ZaloPayError } from "../util/zalopay.js";
 import { calcEta, addMinutes, detectEtaDelay } from "../util/eta.js";
+import { calcDiscountAmount, validateVoucherConditions } from "../util/voucher.js";
 import { parseOrderPagination } from "../util/pagination.js";
 import { isUuid } from "../util/ids.js";
 import { HttpError, badRequest, sendHttpError } from "../util/httpError.js";
@@ -109,10 +114,15 @@ const attachEtaWarnings = async (rows, orders) => {
 
 export const placeOrder = async (req, res) => {
   try {
-    const { items, address, clientRequestId, paymentMethod } = req.body || {};
+    const { items, address, clientRequestId, paymentMethod, voucherCode } = req.body || {};
 
     const requestIdProblem = invalidRequestId(clientRequestId);
     if (requestIdProblem) return badRequest(res, requestIdProblem);
+
+    // Chuoi rong = khong dung voucher, KHONG phai loi - app luon gui field nay,
+    // co the rong khi khach khong nhap ma.
+    const voucherCodeRaw = typeof voucherCode === "string" ? voucherCode.trim() : "";
+    if (voucherCodeRaw.length > 50) return badRequest(res, "Mã giảm giá không hợp lệ");
 
     const normalizedPaymentMethod = VALID_PAYMENT_METHODS.includes(paymentMethod) ? paymentMethod : "cod";
 
@@ -210,7 +220,48 @@ export const placeOrder = async (req, res) => {
         amount += Number(food.price) * quantity;
       }
 
-      await setOrderAmount(client, orderId, amount);
+      // Voucher: khoa dong vouchers theo code NGAY TRONG transaction dat hang -
+      // moi giao dich dung cung ma deu phai doi o day, nen dem-roi-ghi ben
+      // duoi la an toan truoc race condition (xem db/vouchers.js).
+      let discountAmount = 0;
+      let voucherIdApplied = null;
+      let finalAmount = amount;
+
+      if (voucherCodeRaw) {
+        const voucher = await lockVoucherByCode(client, voucherCodeRaw);
+        const voucherForCalc = voucher && {
+          discountType: voucher.discount_type,
+          discountValue: voucher.discount_value,
+          maxDiscountAmount: voucher.max_discount_amount,
+          minOrderValue: voucher.min_order_value,
+          validFrom: voucher.valid_from,
+          validUntil: voucher.valid_until,
+          isActive: voucher.is_active,
+        };
+
+        const conditionProblem = validateVoucherConditions(voucherForCalc, amount);
+        if (conditionProblem) throw new HttpError(400, conditionProblem);
+
+        const totalUsed = await countVoucherRedemptions(client, voucher.id);
+        if (voucher.usage_limit != null && totalUsed >= voucher.usage_limit) {
+          throw new HttpError(400, "Mã giảm giá đã hết lượt sử dụng");
+        }
+        const usedByThisUser = await countVoucherRedemptionsByUser(client, voucher.id, req.userId);
+        if (voucher.usage_limit_per_user != null && usedByThisUser >= voucher.usage_limit_per_user) {
+          throw new HttpError(400, "Bạn đã dùng hết số lần được phép áp dụng mã này");
+        }
+
+        discountAmount = calcDiscountAmount(voucherForCalc, amount);
+        finalAmount = amount - discountAmount;
+        voucherIdApplied = voucher.id;
+      }
+
+      await applyOrderVoucher(client, orderId, { amount: finalAmount, discountAmount, voucherId: voucherIdApplied });
+      if (voucherIdApplied) {
+        await insertVoucherRedemption(client, {
+          voucherId: voucherIdApplied, userId: req.userId, orderId, discountAmount,
+        });
+      }
 
       // Smart ETA: tinh baseline MOT LAN luc dat hang (xem util/eta.js).
       // excludeOrderId = chinh don nay - da duoc INSERT o tren voi status
@@ -235,7 +286,7 @@ export const placeOrder = async (req, res) => {
       // thanh cong (xem processVnpayResult).
       if (normalizedPaymentMethod === "cod") {
         await insertNotification(client, req.userId, "Đặt hàng thành công",
-          `Đơn hàng #${shortCode(orderId)} đã được tạo, tổng tiền ${amount.toLocaleString("vi-VN")}đ. `
+          `Đơn hàng #${shortCode(orderId)} đã được tạo, tổng tiền ${finalAmount.toLocaleString("vi-VN")}đ. `
           + "Chúng tôi sẽ xác nhận trong thời gian sớm nhất.");
       }
 

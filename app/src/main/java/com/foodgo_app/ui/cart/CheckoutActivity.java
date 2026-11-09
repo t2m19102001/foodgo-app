@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.textfield.TextInputEditText;
 import com.foodgo_app.R;
 import com.foodgo_app.adapter.CartSummaryAdapter;
 import com.foodgo_app.model.SavedAddress;
@@ -44,6 +45,14 @@ public class CheckoutActivity extends AppCompatActivity {
     private RadioButton radioPaymentCod;
     private RadioButton radioPaymentVnpay;
     private RadioButton radioPaymentZalopay;
+
+    private TextInputEditText editVoucherCode;
+    private MaterialButton btnApplyVoucher;
+    private TextView textVoucherResult;
+    private View layoutDiscount;
+    private TextView textDiscount;
+    private double currentTotalAmount;
+    private double currentDiscountAmount;
 
     private MaterialButton btnChangeAddress;
     private MaterialButton btnAddAddress;
@@ -88,6 +97,16 @@ public class CheckoutActivity extends AppCompatActivity {
         });
         btnAddAddress.setOnClickListener(v ->
                 startActivityForResult(new Intent(this, AddEditAddressActivity.class), REQUEST_ADD_ADDRESS));
+
+        editVoucherCode = findViewById(R.id.edit_voucher_code);
+        btnApplyVoucher = findViewById(R.id.btn_apply_voucher);
+        textVoucherResult = findViewById(R.id.text_voucher_result);
+        layoutDiscount = findViewById(R.id.layout_discount);
+        textDiscount = findViewById(R.id.text_discount);
+        btnApplyVoucher.setOnClickListener(v -> {
+            String code = editVoucherCode.getText() != null ? editVoucherCode.getText().toString().trim() : "";
+            viewModel.applyVoucherCode(code);
+        });
 
         cardPaymentCod = findViewById(R.id.card_payment_cod);
         cardPaymentVnpay = findViewById(R.id.card_payment_vnpay);
@@ -166,8 +185,36 @@ public class CheckoutActivity extends AppCompatActivity {
     private void observeViewModel() {
         viewModel.getCartItems().observe(this, summaryAdapter::setItems);
 
-        viewModel.getTotalAmount().observe(this, total ->
-                textTotal.setText(CurrencyUtils.formatVnd(total != null ? total : 0)));
+        viewModel.getTotalAmount().observe(this, total -> {
+            currentTotalAmount = total != null ? total : 0;
+            updateTotalDisplay();
+        });
+
+        viewModel.getDiscountAmount().observe(this, discount -> {
+            currentDiscountAmount = discount != null ? discount : 0;
+            boolean hasDiscount = currentDiscountAmount > 0;
+            layoutDiscount.setVisibility(hasDiscount ? View.VISIBLE : View.GONE);
+            textDiscount.setText("-" + CurrencyUtils.formatVnd(currentDiscountAmount));
+            updateTotalDisplay();
+        });
+
+        viewModel.getAppliedVoucherCode().observe(this, code -> {
+            boolean applied = code != null && !code.isEmpty();
+            if (applied) {
+                textVoucherResult.setText("Áp dụng mã \"" + code + "\" thành công");
+                textVoucherResult.setTextColor(getColor(R.color.colorPrimary));
+                textVoucherResult.setVisibility(View.VISIBLE);
+            }
+        });
+
+        viewModel.getVoucherError().observe(this, message -> {
+            if (message != null && !message.isEmpty()) {
+                textVoucherResult.setText(message);
+                textVoucherResult.setTextColor(getColor(R.color.error));
+                textVoucherResult.setVisibility(View.VISIBLE);
+                viewModel.clearVoucherError();
+            }
+        });
 
         viewModel.getLoading().observe(this, loadingValue -> {
             isLoading = Boolean.TRUE.equals(loadingValue);
@@ -179,11 +226,13 @@ public class CheckoutActivity extends AppCompatActivity {
             hasPending = Boolean.TRUE.equals(pending);
             btnPlaceOrder.setText(hasPending ? "Kiểm tra / thanh toán lại" : "Đặt hàng");
             layoutPendingActions.setVisibility(hasPending ? View.VISIBLE : View.GONE);
-            // Dang cho thanh toan thi khong doi phuong thuc tai cho: phai huy truoc
+            // Dang cho thanh toan thi khong doi phuong thuc/ma giam gia tai cho: phai huy truoc
             float alpha = hasPending ? 0.5f : 1f;
             cardPaymentCod.setAlpha(alpha);
             cardPaymentVnpay.setAlpha(alpha);
             cardPaymentZalopay.setAlpha(alpha);
+            editVoucherCode.setEnabled(!hasPending);
+            btnApplyVoucher.setEnabled(!hasPending);
             updatePlaceOrderButtonState();
         });
 
@@ -239,6 +288,11 @@ public class CheckoutActivity extends AppCompatActivity {
                 finish();
             }
         });
+    }
+
+    private void updateTotalDisplay() {
+        double finalAmount = Math.max(0, currentTotalAmount - currentDiscountAmount);
+        textTotal.setText(CurrencyUtils.formatVnd(finalAmount));
     }
 
     private void bindAddress(SavedAddress address) {

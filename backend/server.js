@@ -19,6 +19,7 @@ import chatRouter from "./routers/chatRouter.js";
 import recommendationRouter from "./routers/recommendationRouter.js";
 import restaurantRouter from "./routers/restaurantRouter.js";
 import driverRouter from "./routers/driverRouter.js";
+import voucherRouter from "./routers/voucherRouter.js";
 import { expireStaleVnpayOrders } from "./controllers/orderController.js";
 import { findPaymentDiscrepancies } from "./util/reconciliation.js";
 
@@ -93,6 +94,7 @@ app.use("/api/chat", chatRouter);
 app.use("/api/recommendations", recommendationRouter);
 app.use("/api/restaurant", restaurantRouter);
 app.use("/api/driver", driverRouter);
+app.use("/api/voucher", voucherRouter);
 
 app.get("/", (req, res) => {
   res.send("Delivery App API Working");

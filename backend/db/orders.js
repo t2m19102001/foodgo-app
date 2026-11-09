@@ -61,7 +61,7 @@ const DRIVER_LOCATION_SELECT = `
 // items lay bang json_agg trong cung mot query - khong bao gio lap vong goi
 // query cho tung don (N+1)
 export const ORDER_SELECT = `
-  SELECT o.*,
+  SELECT o.*, vch.code AS voucher_code,
 ${ETA_SELECT},
 ${DRIVER_LOCATION_SELECT},
          COALESCE((
@@ -72,11 +72,13 @@ ${DRIVER_LOCATION_SELECT},
          ), '[]'::json) AS items
   FROM orders o
   LEFT JOIN delivery_estimates de ON de.order_id = o.id
-  LEFT JOIN driver_locations dl ON dl.driver_id = o.driver_id`;
+  LEFT JOIN driver_locations dl ON dl.driver_id = o.driver_id
+  LEFT JOIN vouchers vch ON vch.id = o.voucher_id`;
 
 // Thong tin khach nam o field "customer": app Android doc "userId" la chuoi.
 const ADMIN_ORDER_SELECT = `
   SELECT o.*, u.name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
+         vch.code AS voucher_code,
 ${ETA_SELECT},
 ${DRIVER_LOCATION_SELECT},
          COALESCE((
@@ -88,7 +90,8 @@ ${DRIVER_LOCATION_SELECT},
   FROM orders o
   JOIN users u ON u.id = o.user_id
   LEFT JOIN delivery_estimates de ON de.order_id = o.id
-  LEFT JOIN driver_locations dl ON dl.driver_id = o.driver_id`;
+  LEFT JOIN driver_locations dl ON dl.driver_id = o.driver_id
+  LEFT JOIN vouchers vch ON vch.id = o.voucher_id`;
 
 // Row thuan cua Postgres -> JSON dung hinh ma app Android cho doi. Cac ham doc
 // ben duoi tra ve ROW THO chu khong goi san ham nay, vi nhieu cho con can

@@ -70,8 +70,8 @@ export const migrate = async () => {
 
 const TABLES = [
   "order_status_history", "payments", "payment_attempts", "zalopay_transactions",
-  "delivery_estimates", "driver_locations", "order_items", "orders",
-  "reviews", "notifications", "addresses", "foods", "categories", "users",
+  "voucher_redemptions", "delivery_estimates", "driver_locations", "order_items", "orders",
+  "reviews", "notifications", "addresses", "foods", "categories", "users", "vouchers",
 ];
 
 export const resetDb = async () => {
@@ -145,6 +145,22 @@ export const makeOrder = async (userId, {
     );
   }
   return orderId;
+};
+
+export const makeVoucher = async ({
+  code = "SALE10", discountType = "percent", discountValue = 10, maxDiscountAmount = null,
+  minOrderValue = 0, usageLimit = null, usageLimitPerUser = null,
+  validFrom = null, validUntil = null, isActive = true,
+} = {}) => {
+  const { query } = await getDb();
+  const { rows } = await query(
+    `INSERT INTO vouchers (code, discount_type, discount_value, max_discount_amount, min_order_value,
+                           usage_limit, usage_limit_per_user, valid_from, valid_until, is_active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+    [code, discountType, discountValue, maxDiscountAmount, minOrderValue,
+      usageLimit, usageLimitPerUser, validFrom, validUntil, isActive]
+  );
+  return rows[0].id;
 };
 
 export const countRows = async (table, where = "", params = []) => {

@@ -17,9 +17,11 @@ import com.foodgo_app.model.SavedAddress;
 import com.foodgo_app.model.response.AddressListResponse;
 import com.foodgo_app.model.response.OrderDetailResponse;
 import com.foodgo_app.model.response.PlaceOrderRequest;
+import com.foodgo_app.model.response.ValidateVoucherResponse;
 import com.foodgo_app.repository.AddressRepository;
 import com.foodgo_app.repository.CartRepository;
 import com.foodgo_app.repository.OrderRepository;
+import com.foodgo_app.repository.VoucherRepository;
 import com.foodgo_app.util.SessionManager;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
@@ -37,6 +39,7 @@ public class CheckoutViewModel extends AndroidViewModel {
     private final CartRepository cartRepository;
     private final OrderRepository orderRepository;
     private final AddressRepository addressRepository;
+    private final VoucherRepository voucherRepository;
     private final SharedPreferences pendingPrefs;
     private final String pendingKey;
     private final Gson gson = new Gson();
@@ -62,21 +65,36 @@ public class CheckoutViewModel extends AndroidViewModel {
     private final MutableLiveData<String> info = new MutableLiveData<>();
     private final MutableLiveData<List<SavedAddress>> addresses = new MutableLiveData<>();
     private final MutableLiveData<SavedAddress> selectedAddress = new MutableLiveData<>();
+    // Ma giam gia da ap dung thanh cong (preview) - null = khong dung ma
+    private final MutableLiveData<String> appliedVoucherCode = new MutableLiveData<>();
+    private final MutableLiveData<Double> discountAmount = new MutableLiveData<>(0.0);
+    // Loi RIENG cho o nhap ma (khac "error" chung cua dat hang) de hien ngay duoi o nhap
+    private final MutableLiveData<String> voucherError = new MutableLiveData<>();
 
     public CheckoutViewModel(@NonNull Application application) {
         this(application, new CartRepository(application), new OrderRepository(application),
-                new AddressRepository(application));
+                new AddressRepository(application), new VoucherRepository(application));
     }
 
     // Package-private: dung de inject repository gia trong unit test (xem
     // app/src/test/java/com/foodgo_app/ui/cart/CheckoutViewModelTest.java),
     // khong dung o production - ViewModelProvider chi goi constructor 1 tham so.
+    // Giu lai overload 4 tham so (khong co voucherRepository) de cac test hien co
+    // khong phai sua: tu tao mot VoucherRepository thuc, khong gia - cac test do
+    // khong dong tram gi den luong voucher nen khong anh huong.
     CheckoutViewModel(@NonNull Application application, CartRepository cartRepository,
                        OrderRepository orderRepository, AddressRepository addressRepository) {
+        this(application, cartRepository, orderRepository, addressRepository, new VoucherRepository(application));
+    }
+
+    CheckoutViewModel(@NonNull Application application, CartRepository cartRepository,
+                       OrderRepository orderRepository, AddressRepository addressRepository,
+                       VoucherRepository voucherRepository) {
         super(application);
         this.cartRepository = cartRepository;
         this.orderRepository = orderRepository;
         this.addressRepository = addressRepository;
+        this.voucherRepository = voucherRepository;
         pendingPrefs = application.getSharedPreferences("delivery_app_checkout", Context.MODE_PRIVATE);
         pendingKey = pendingKeyFor(application);
         hasPendingOrder.setValue(pendingPrefs.contains(pendingKey));
@@ -113,6 +131,48 @@ public class CheckoutViewModel extends AndroidViewModel {
     public LiveData<String> getInfo() { return info; }
     public void clearInfo() { info.setValue(null); }
     public LiveData<SavedAddress> getSelectedAddress() { return selectedAddress; }
+    public LiveData<String> getAppliedVoucherCode() { return appliedVoucherCode; }
+    public LiveData<Double> getDiscountAmount() { return discountAmount; }
+    public LiveData<String> getVoucherError() { return voucherError; }
+    public void clearVoucherError() { voucherError.setValue(null); }
+
+    // Preview: KHONG dat hang, chi hoi server "ma nay giam duoc bao nhieu" de
+    // hien truoc khi bam Dat hang. Kiem tra THAT (chong dung hai lan) nam trong
+    // transaction placeOrder o server - preview co the bi lech nhe do race,
+    // chap nhan duoc vi day chi la UX (xem backend/controllers/voucherController.js).
+    public void applyVoucherCode(String code) {
+        String trimmed = code != null ? code.trim() : "";
+        if (trimmed.isEmpty()) {
+            appliedVoucherCode.setValue(null);
+            discountAmount.setValue(0.0);
+            voucherError.setValue(null);
+            return;
+        }
+        Double total = totalAmount.getValue();
+        voucherRepository.validateVoucher(trimmed, total != null ? total : 0).enqueue(new Callback<ValidateVoucherResponse>() {
+            @Override
+            public void onResponse(@NonNull Call<ValidateVoucherResponse> call, @NonNull Response<ValidateVoucherResponse> response) {
+                ValidateVoucherResponse body = response.body();
+                if (response.isSuccessful() && body != null && body.isSuccess()) {
+                    appliedVoucherCode.setValue(trimmed);
+                    discountAmount.setValue(body.getDiscountAmount());
+                    voucherError.setValue(null);
+                } else {
+                    appliedVoucherCode.setValue(null);
+                    discountAmount.setValue(0.0);
+                    voucherError.setValue(body != null ? body.getMessage()
+                            : ApiErrorUtils.getMessage(response, "Không áp dụng được mã giảm giá"));
+                }
+            }
+
+            @Override
+            public void onFailure(@NonNull Call<ValidateVoucherResponse> call, @NonNull Throwable t) {
+                appliedVoucherCode.setValue(null);
+                discountAmount.setValue(0.0);
+                voucherError.setValue("Không thể kết nối tới server: " + t.getMessage());
+            }
+        });
+    }
 
     public void loadAddresses() {
         addressRepository.getMyAddresses().enqueue(new Callback<AddressListResponse>() {
@@ -193,7 +253,7 @@ public class CheckoutViewModel extends AndroidViewModel {
                 savedAddress.getAddress(), savedAddress.getNote(), savedAddress.getLat(), savedAddress.getLng());
         double amount = cartRepository.getTotalAmount();
         PlaceOrderRequest request = new PlaceOrderRequest(orderItems, amount, address,
-                UUID.randomUUID().toString(), paymentMethod);
+                UUID.randomUUID().toString(), paymentMethod, appliedVoucherCode.getValue());
         if (!pendingPrefs.edit().putString(pendingKey, gson.toJson(request)).commit()) {
             error.setValue("Không thể lưu yêu cầu đặt hàng trên thiết bị. Vui lòng thử lại.");
             return;
@@ -376,6 +436,9 @@ public class CheckoutViewModel extends AndroidViewModel {
         hasPendingOrder.setValue(false);
         pendingStatus.setValue(null);
         resumePayUrl.setValue(null);
+        appliedVoucherCode.setValue(null);
+        discountAmount.setValue(0.0);
+        voucherError.setValue(null);
     }
 
     // Goi khi xoa tai khoan: bo yeu cau dat hang dang cho cua tai khoan nay

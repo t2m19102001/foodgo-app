@@ -226,6 +226,19 @@
                         android:background="@color/divider" />
 
                     <TextView
+                        android:id="@+id/btn_admin_vouchers"
+                        style="@style/Text.App.MenuRow"
+                        android:drawableStart="@drawable/ic_payments"
+                        android:drawableEnd="@drawable/ic_chevron_right"
+                        android:text="Quản lý mã giảm giá" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginStart="50dp"
+                        android:background="@color/divider" />
+
+                    <TextView
                         android:id="@+id/btn_admin_stats"
                         style="@style/Text.App.MenuRow"
                         android:drawableStart="@drawable/ic_chart"

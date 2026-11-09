@@ -130,6 +130,13 @@
         <activity
             android:name=".ui.admin.AdminStatsActivity"
             android:exported="false" />
+        <activity
+            android:name=".ui.admin.AdminVoucherActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.admin.AddEditVoucherActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>

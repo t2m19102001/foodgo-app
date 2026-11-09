@@ -40,6 +40,11 @@ import com.foodgo_app.model.response.SetDriverFlagRequest;
 import com.foodgo_app.model.response.SimpleResponse;
 import com.foodgo_app.model.response.UpdateDriverLocationRequest;
 import com.foodgo_app.model.response.UpdateStatusRequest;
+import com.foodgo_app.model.response.ValidateVoucherRequest;
+import com.foodgo_app.model.response.ValidateVoucherResponse;
+import com.foodgo_app.model.response.SaveVoucherRequest;
+import com.foodgo_app.model.response.VoucherDetailResponse;
+import com.foodgo_app.model.response.VoucherListResponse;
 
 import okhttp3.MultipartBody;
 import okhttp3.RequestBody;
@@ -261,4 +266,21 @@ public interface ApiService {
 
     @PUT("api/auth/users/{id}/driver")
     Call<SimpleResponse> setDriverFlag(@Path("id") String id, @Body SetDriverFlagRequest body);
+
+    // ===== Voucher =====
+    @POST("api/voucher/validate")
+    Call<ValidateVoucherResponse> validateVoucher(@Body ValidateVoucherRequest body);
+
+    // ===== Voucher (admin) =====
+    @GET("api/voucher")
+    Call<VoucherListResponse> getVoucherList();
+
+    @POST("api/voucher")
+    Call<VoucherDetailResponse> createVoucher(@Body SaveVoucherRequest body);
+
+    @PUT("api/voucher/{id}")
+    Call<VoucherDetailResponse> updateVoucher(@Path("id") String id, @Body SaveVoucherRequest body);
+
+    @DELETE("api/voucher/{id}")
+    Call<SimpleResponse> deleteVoucher(@Path("id") String id);
 }

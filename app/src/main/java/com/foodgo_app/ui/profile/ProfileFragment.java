@@ -25,6 +25,7 @@ import com.foodgo_app.ui.admin.AdminCategoryActivity;
 import com.foodgo_app.ui.admin.AdminFoodActivity;
 import com.foodgo_app.ui.admin.AdminOrderActivity;
 import com.foodgo_app.ui.admin.AdminStatsActivity;
+import com.foodgo_app.ui.admin.AdminVoucherActivity;
 import com.foodgo_app.ui.auth.LoginActivity;
 import com.foodgo_app.ui.driver.DriverOrdersActivity;
 import com.foodgo_app.util.Constants;
@@ -86,6 +87,8 @@ public class ProfileFragment extends Fragment {
                     startActivity(new Intent(getActivity(), AdminFoodActivity.class)));
             view.findViewById(R.id.btn_admin_categories).setOnClickListener(v ->
                     startActivity(new Intent(getActivity(), AdminCategoryActivity.class)));
+            view.findViewById(R.id.btn_admin_vouchers).setOnClickListener(v ->
+                    startActivity(new Intent(getActivity(), AdminVoucherActivity.class)));
             view.findViewById(R.id.btn_admin_stats).setOnClickListener(v ->
                     startActivity(new Intent(getActivity(), AdminStatsActivity.class)));
         }

@@ -87,6 +87,9 @@ export const mapOrder = (row, items = []) => row && {
   userId: row.user_id,
   items: items.map(mapOrderItem),
   amount: row.amount,
+  // Snapshot voucher da ap dung (migration 013) - 0/null voi don khong dung ma
+  discountAmount: row.discount_amount || 0,
+  voucherCode: row.voucher_code || null,
   address: {
     fullName: row.ship_full_name,
     phone: row.ship_phone,
@@ -147,6 +150,27 @@ export const mapNotification = (row) => row && {
   message: row.message,
   isRead: row.is_read,
   createdAt: row.created_at,
+};
+
+// usedCount chi co gia tri khi query co subquery dem voucher_redemptions (xem
+// db/vouchers.js) - API admin can, API validate (khach) khong join nen undefined,
+// Gson/JSON.stringify bo qua field undefined an toan.
+export const mapVoucher = (row) => row && {
+  _id: row.id,
+  code: row.code,
+  description: row.description,
+  discountType: row.discount_type,
+  discountValue: row.discount_value,
+  maxDiscountAmount: row.max_discount_amount,
+  minOrderValue: row.min_order_value,
+  usageLimit: row.usage_limit,
+  usageLimitPerUser: row.usage_limit_per_user,
+  validFrom: row.valid_from,
+  validUntil: row.valid_until,
+  isActive: row.is_active,
+  usedCount: row.used_count != null ? Number(row.used_count) : undefined,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
 };
 
 export const mapAddress = (row) => row && {
